@@ -2,7 +2,7 @@
     <div class="background">
         <div class="background_login">
             <div class="background_login_bac">
-                <div class="login_tittle">CrispMallAdmin</div>
+                <div class="login_tittle">CrispFileSystem</div>
                 <div class="login_username">
                     <el-input v-model="username" placeholder="输入账号" clearable />
                 </div>
@@ -19,6 +19,7 @@
 </template>
 
 <script>
+import { useStore } from 'vuex'
 import { ref } from 'vue';
 import { ElNotification } from 'element-plus'
 import axios from 'axios'
@@ -26,8 +27,10 @@ import router from '@/router';
 export default {
     name: "LoginView",
     setup() {
+        const store = useStore();
         let username = ref('');
         let password = ref('');
+        let curPath = ref('/');
         let load = ref(false);
         let ji = new Audio("http://119.29.100.51:11000/crispmall/ji.mp3");
         let ngm = new Audio("http://119.29.100.51:11000/crispmall/ngm.mp3");
@@ -41,6 +44,10 @@ export default {
             }).then((response) => {
                 load.value = false;
                 if (response.data.code === 1) {
+                    store.commit('user/updateUsername', username.value);
+                    store.commit('user/updateGroup', response.data.data.group);
+                    curPath.value += username.value;
+                    store.commit('user/updatePath', curPath.value);
                     router.push({ path: '/index' });
                     ElNotification({
                         title: '登录成功',

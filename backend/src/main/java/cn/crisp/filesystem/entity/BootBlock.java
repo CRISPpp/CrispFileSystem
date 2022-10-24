@@ -4,6 +4,8 @@ import lombok.AllArgsConstructor;
 import lombok.Data;
 
 import java.io.Serializable;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.concurrent.ConcurrentHashMap;
 
 import static cn.crisp.filesystem.common.Constants.*;
@@ -12,8 +14,7 @@ import static cn.crisp.filesystem.common.Constants.*;
 @Data
 public class BootBlock implements Serializable {
     public static final long serialVersionUID = 6L;
-    private ConcurrentHashMap<String, String> BootInfo;
-    private ConcurrentHashMap<String, Integer> UserLimit;
+    private List<User> userList;
     private int totalSize;
     private int blockTotalSize;
     private int keepTotalSize;
@@ -25,16 +26,12 @@ public class BootBlock implements Serializable {
     private int inodePos;
     private int blockPos;
     public BootBlock(){
-        BootInfo = new ConcurrentHashMap<>();
-        UserLimit = new ConcurrentHashMap<>();
-        BootInfo.put("root", "root");
-        BootInfo.put("userOne", "userOne");
-        BootInfo.put("userTwo", "userTwo");
-        BootInfo.put("userThree", "userThree");
-        UserLimit.put("root", 0);
-        UserLimit.put("userOne", 0);
-        UserLimit.put("userTwo", 1);
-        UserLimit.put("userThree", 2);
+        userList = new ArrayList<>();
+        userList.add(new User("system", "system", "root"));
+        userList.add(new User("root", "root", "root"));
+        userList.add(new User("userOne", "userOne", "groupOne"));
+        userList.add(new User("userTwo", "userTwo", "groupOne"));
+        userList.add(new User("userThree", "userThree", "groupTwo"));
 
         totalSize = TotalSize;
         blockTotalSize = BlockTotalSize;

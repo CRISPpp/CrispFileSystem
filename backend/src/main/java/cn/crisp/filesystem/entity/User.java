@@ -1,4 +1,4 @@
-package cn.crisp.filesystem.dto;
+package cn.crisp.filesystem.entity;
 
 import lombok.AllArgsConstructor;
 import lombok.Data;
@@ -7,10 +7,11 @@ import lombok.NoArgsConstructor;
 import java.io.Serializable;
 
 @NoArgsConstructor
-@AllArgsConstructor
 @Data
-public class LoginDto implements Serializable {
-    public static final long serialVersionUID = 8L;
+@AllArgsConstructor
+public class User implements Serializable {
+    public static final long serialVersionUID = 3L;
     private String username;
     private String password;
+    private String group;
 }

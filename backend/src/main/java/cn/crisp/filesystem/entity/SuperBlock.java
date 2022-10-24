@@ -6,6 +6,7 @@ import lombok.Data;
 import java.io.Serializable;
 
 import static cn.crisp.filesystem.common.Constants.BlockNum;
+import static cn.crisp.filesystem.common.Constants.BlockTotalSize;
 
 @AllArgsConstructor
 @Data
@@ -16,10 +17,11 @@ public class SuperBlock implements Serializable {
     private int inodeNum; // 4 byte
     private int blockNum; // 4 byte
     private int blockFree; //4 byte
-
+    private int lastBlockSize; // 4 byte
     public SuperBlock(){
         inodeNum = 0;
         blockNum = 0;
         blockFree = BlockNum - blockNum;
+        lastBlockSize = BlockTotalSize;
     }
 }

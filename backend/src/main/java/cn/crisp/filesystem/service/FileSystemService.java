@@ -1,14 +1,16 @@
 package cn.crisp.filesystem.service;
 
-import cn.crisp.filesystem.entity.Fcb;
 import cn.crisp.filesystem.system.FileSystem;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 import java.io.*;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Objects;
 
 import static cn.crisp.filesystem.common.Constants.DISK;
+import static cn.crisp.filesystem.common.Constants.TotalSize;
 
 @Slf4j
 @Service
@@ -54,5 +56,20 @@ public class FileSystemService {
             e.printStackTrace();
         }
         return fileSystem;
+    }
+
+    public List<String> getSystemInfo(FileSystem fileSystem) {
+        List<String> ret = new ArrayList<>();
+
+        String str = "系统总大小为: " + TotalSize;
+        ret.add(str);
+
+        str = "已创建文件目录总数, 即i结点个数为: " + String.valueOf(fileSystem.getSuperBlock().getInodeNum());
+        ret.add(str);
+
+        str = "已经使用的磁盘块个数: " + String.valueOf(fileSystem.getSuperBlock().getBlockNum());
+        ret.add(str);
+
+        return ret;
     }
 }
