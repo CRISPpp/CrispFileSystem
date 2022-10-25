@@ -59,9 +59,10 @@ public class FileSystem implements Serializable {
             inodes.put(inode.getId(), inode);
 
             //加入根目录
-            DirTree tmpDirTree = new DirTree();
+            DirTree tmpDirTree = new DirTree(dirTree);
             tmpDirTree.setInode(inode);
             dirTree.getNext().add(tmpDirTree);
+            dirTree.getInode().setLength(dirTree.getInode().getLength() + 1);
         }
 
         log.info("初始化完成");

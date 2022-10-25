@@ -31,6 +31,6 @@ public class Constants {
 
 
     public static final List<String> CMDList = new ArrayList<>(Arrays.asList("info", "cd", "dir", "md", "rd", "newfile", "cat", "copy", "del", "check"));
-    public static final List<String> CMDDescription = new ArrayList<>(Arrays.asList("显示整个系统信息", "改变目录", "显示目录", "创建目录", "删除目录", "建立文件", "打开文件", "拷贝文件", "删除文件", "检测并恢复文件系统"));
+    public static final List<String> CMDDescription = new ArrayList<>(Arrays.asList("显示整个系统信息", "改变目录,可使用相对路径和全局路径", "显示目录", "创建目录", "删除目录", "建立文件", "打开文件", "拷贝文件", "删除文件", "检测并恢复文件系统"));
 
 }

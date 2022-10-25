@@ -61,7 +61,7 @@ public class FileSystemService {
     public List<String> getSystemInfo(FileSystem fileSystem) {
         List<String> ret = new ArrayList<>();
 
-        String str = "系统总大小为: " + TotalSize;
+        String str = "系统总大小为: " + TotalSize + "bytes";
         ret.add(str);
 
         str = "已创建文件目录总数, 即i结点个数为: " + String.valueOf(fileSystem.getSuperBlock().getInodeNum());
@@ -70,6 +70,25 @@ public class FileSystemService {
         str = "已经使用的磁盘块个数: " + String.valueOf(fileSystem.getSuperBlock().getBlockNum());
         ret.add(str);
 
+        str = "剩余的磁盘块个数: " + String.valueOf(fileSystem.getSuperBlock().getBlockFree());
+        ret.add(str);
+
+        str = "剩余空间大小为: " + String.valueOf(fileSystem.getSuperBlock().getLastBlockSize()) + "bytes";
+        ret.add(str);
+
+        str = "启动块在磁盘的偏移为: " + String.valueOf(fileSystem.getBootBlock().getBootBlockPos()) + "bytes";
+        ret.add(str);
+
+        str = "超级块在磁盘的偏移为: " + String.valueOf(fileSystem.getBootBlock().getSuperBlockPos()) + "bytes";
+        ret.add(str);
+
+        str = "i结点在磁盘的偏移为: " + String.valueOf(fileSystem.getBootBlock().getInodePos()) + "bytes";
+        ret.add(str);
+
+        str = "可用磁盘区在磁盘的偏移为: " + String.valueOf(fileSystem.getBootBlock().getBlockPos()) + "bytes";
+        ret.add(str);
         return ret;
     }
+
+
 }
