@@ -5,6 +5,7 @@ import cn.crisp.filesystem.dto.ChangePathDto;
 import cn.crisp.filesystem.entity.DirTree;
 import cn.crisp.filesystem.entity.User;
 import cn.crisp.filesystem.system.FileSystem;
+import cn.crisp.filesystem.vo.FileVo;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
 import org.springframework.stereotype.Service;
@@ -181,4 +182,65 @@ public class FileSystemService {
         return R.error("路径错误");
     }
 
+    //获取当前目录的所有文件
+    public List<FileVo> getDir(String path, FileSystem fileSystem) {
+        List<FileVo> ret = new ArrayList<>();
+        String[] t = path.split("/");
+        DirTree p = fileSystem.getDirTree();
+        for (String s : t) {
+            for (DirTree d : p.getNext()) {
+                if (Objects.equals(d.getInode().getName(), s)) {
+                    p = d;
+                    break;
+                }
+            }
+        }
+
+        for (DirTree d : p.getNext()) {
+            ret.add(new FileVo(d.getInode().getName(),
+                    d.getInode().getId(),
+                    d.getInode().getAddress(),
+                    d.getInode().getLimit(),
+                    d.getInode().getLength(),
+                    d.getInode().getCreateBy(),
+                    d.getInode().getCreateTime(),
+                    d.getInode().getIsDir()));
+        }
+
+        return ret;
+    }
+
+    //获取目录下所有文件，包括子文件，算法：bfs
+    public List<FileVo> getDirs(String path, FileSystem fileSystem) {
+        List<FileVo> ret = new ArrayList<>();
+        String[] t = path.split("/");
+        DirTree p = fileSystem.getDirTree();
+        for (String s : t) {
+            for (DirTree d : p.getNext()) {
+                if (Objects.equals(d.getInode().getName(), s)) {
+                    p = d;
+                    break;
+                }
+            }
+        }
+
+        Deque<DirTree> deque = new ArrayDeque<>();
+        deque.addLast(p);
+        while(deque.size() > 0) {
+            DirTree pp = deque.getFirst();
+            deque.removeFirst();
+            for (DirTree d : pp.getNext()) {
+                if (d.getInode().getIsDir() == 1) deque.addLast(d);
+                ret.add(new FileVo(d.getInode().getName(),
+                        d.getInode().getId(),
+                        d.getInode().getAddress(),
+                        d.getInode().getLimit(),
+                        d.getInode().getLength(),
+                        d.getInode().getCreateBy(),
+                        d.getInode().getCreateTime(),
+                        d.getInode().getIsDir()));
+            }
+        }
+        return ret;
+    }
 }

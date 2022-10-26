@@ -75,16 +75,18 @@ export default {
             }
 
             else if (mark[0] == "dir") {
-                if (mark.length > 3) {
+                if (mark.length === 2) {
+                    dir(mark[1]);
+                } else if (mark.length === 1) {
+                    dir(store.state.user.info.curPath);
+                } else if (mark.length === 3 && mark[2] === '/s') {
+                    dirs(mark[1]);
+                } else {
                     ElNotification({
                         title: '指令错误',
                         message: "请检查指令或者输入help查看指令信息",
                         type: 'error',
                     })
-                } else if (mark.length === 2) {
-                    dir(mark[1]);
-                } else if (mark.length === 1) {
-                    dir(store.state.user.info.curPath);
                 }
             }
 
@@ -243,6 +245,41 @@ export default {
                         cmd_context.context.unshift(store.state.user.info.curPath + 'dir ' + path);
                     } else {
                         cmd_context.context.unshift(store.state.user.info.curPath + '/' + 'dir ' + path);
+                    }
+                }
+                else {
+                    ElNotification({
+                        title: '发生错误',
+                        message: response.data.msg,
+                        type: 'error',
+                    })
+                }
+            }).catch(error => console.log(error));
+            cmd.value = "";
+        }
+        let dirs = (path) => {
+            if (path[0] != '/') {
+                if (store.state.user.info.curPath == "/") {
+                    path = store.state.user.info.curPath + path;
+                } else {
+                    path = store.state.user.info.curPath + '/' + path;
+                }
+            }
+            axios.post('/api/sys/dirs', {
+                'path': path,
+                'username': store.state.user.info.username,
+                'group': store.state.user.info.group,
+            }).then((response) => {
+                if (response.data.code === 1) {
+                    for (let i = response.data.data.length - 1; i >= 0; i--) {
+                        cmd_context.res.unshift(" ");
+                        formatFile(response.data.data[i]);
+                    }
+                    cmd_context.context.unshift(" ");
+                    if (store.state.user.info.curPath == '/') {
+                        cmd_context.context.unshift(store.state.user.info.curPath + 'dir ' + path + " /s");
+                    } else {
+                        cmd_context.context.unshift(store.state.user.info.curPath + '/' + 'dir ' + path + " /s");
                     }
                 }
                 else {

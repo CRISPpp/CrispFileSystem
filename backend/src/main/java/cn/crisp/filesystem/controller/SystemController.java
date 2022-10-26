@@ -95,35 +95,27 @@ public class SystemController {
     }
 
     @ApiOperation("查询目录内容")
-    @PostMapping("dir")
+    @PostMapping("/dir")
     public R<List<FileVo>> dir(@RequestBody ChangePathDto changePathDto) {
         R<String> tmp = fileSystemService.checkDir(changePathDto, fileSystem);
         if (tmp.getCode() == 0) {
             return R.error(tmp.getMsg());
         }
         String path = tmp.getData();
-        List<FileVo> ret = new ArrayList<>();
-        String[] t = path.split("/");
-        DirTree p = fileSystem.getDirTree();
-        for (String s : t) {
-            for (DirTree d : p.getNext()) {
-                if (Objects.equals(d.getInode().getName(), s)) {
-                    p = d;
-                    break;
-                }
-            }
-        }
+        List<FileVo> ret = fileSystemService.getDir(path, fileSystem);
 
-        for (DirTree d : p.getNext()) {
-            ret.add(new FileVo(d.getInode().getName(),
-                    d.getInode().getId(),
-                    d.getInode().getAddress(),
-                    d.getInode().getLimit(),
-                    d.getInode().getLength(),
-                    d.getInode().getCreateBy(),
-                    d.getInode().getCreateTime(),
-                    d.getInode().getIsDir()));
+        return R.success(ret);
+    }
+
+    @ApiOperation("查询目录下所有子文件")
+    @PostMapping("/dirs")
+    public R<List<FileVo>> dirs(@RequestBody ChangePathDto changePathDto) {
+        R<String> tmp = fileSystemService.checkDir(changePathDto, fileSystem);
+        if (tmp.getCode() == 0) {
+            return R.error(tmp.getMsg());
         }
+        String path = tmp.getData();
+        List<FileVo> ret = fileSystemService.getDirs(path, fileSystem);
 
         return R.success(ret);
     }
