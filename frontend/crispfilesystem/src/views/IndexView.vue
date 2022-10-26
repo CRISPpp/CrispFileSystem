@@ -62,7 +62,6 @@ export default {
 
         let handleCMD = () => {
             let mark = cmd.value.split(" ")
-
             if (mark[0] == "help") {
                 getHelp();
             }
@@ -76,7 +75,25 @@ export default {
             }
 
             else if (mark[0] == "dir") {
-                dir();
+                if (mark.length > 3) {
+                    ElNotification({
+                        title: '指令错误',
+                        message: "请检查指令或者输入help查看指令信息",
+                        type: 'error',
+                    })
+                } else if (mark.length === 2) {
+                    dir(mark[1]);
+                } else if (mark.length === 1) {
+                    dir(store.state.user.info.curPath);
+                }
+            }
+
+            else if (mark[0] == "check") {
+                check();
+            }
+
+            else if (mark[0] == "save") {
+                save();
             }
 
             else {
@@ -100,7 +117,11 @@ export default {
                         str += response.data.data.cmddescription[i];
                         cmd_context.res.unshift(str);
                     }
-                    cmd_context.context.unshift(store.state.user.info.curPath + "/help");
+                    if (store.state.user.info.curPath == '/') {
+                        cmd_context.context.unshift(store.state.user.info.curPath + 'help');
+                    } else {
+                        cmd_context.context.unshift(store.state.user.info.curPath + '/' + 'help');
+                    }
                 }
                 else {
                     ElNotification({
@@ -121,7 +142,11 @@ export default {
                     for (let i = response.data.data.length - 1; i >= 0; i--) {
                         cmd_context.res.unshift(response.data.data[i]);
                     }
-                    cmd_context.context.unshift(store.state.user.info.curPath + "/info");
+                    if (store.state.user.info.curPath == '/') {
+                        cmd_context.context.unshift(store.state.user.info.curPath + 'info');
+                    } else {
+                        cmd_context.context.unshift(store.state.user.info.curPath + '/' + 'info');
+                    }
                 }
                 else {
                     ElNotification({
@@ -166,9 +191,118 @@ export default {
             cmd.value = "";
         }
 
+        let formatFile = (file) => {
+            if (file.isDir === 1) {
+                cmd_context.res.unshift("目录在inode区的块号为: " + file.id);
+                cmd_context.res.unshift("目录权限保护码: " + file.limit);
+                cmd_context.res.unshift("目录创建时间: " + file.createTime);
+                cmd_context.res.unshift("目录创建者: " + file.createBy);
+                cmd_context.res.unshift("目录中文件个数: " + file.length);
+                cmd_context.res.unshift("目录名: " + file.filename);
+            } else {
+                let pos = "";
+                for (let i = 0; i < 10; i++) {
+                    if (file.address[i] === -1) break;
+                    if (i != 0) pos += ', ';
+                    pos += file.address[i];
+                }
+                if (file.address[10] === -1) {
+                    cmd_context.res.unshift("文件内容在磁盘区无间接索引");
+                } else {
+                    cmd_context.res.unshift("文件内容在磁盘区的间接索引块号为: " + file.address[10]);
+                }
+                cmd_context.res.unshift("文件内容在磁盘区的直接索引块号为: " + pos);
+                cmd_context.res.unshift("文件在inode区的块号为: " + file.id);
+                cmd_context.res.unshift("文件权限保护码: " + file.limit);
+                cmd_context.res.unshift("文件创建时间: " + file.createTime);
+                cmd_context.res.unshift("文件创建者: " + file.createBy);
+                cmd_context.res.unshift("文件大小: " + file.length + "byte");
+                cmd_context.res.unshift("文件名: " + file.filename);
+            }
+        }
+        let dir = (path) => {
+            if (path[0] != '/') {
+                if (store.state.user.info.curPath == "/") {
+                    path = store.state.user.info.curPath + path;
+                } else {
+                    path = store.state.user.info.curPath + '/' + path;
+                }
+            }
+            axios.post('/api/sys/dir', {
+                'path': path,
+                'username': store.state.user.info.username,
+                'group': store.state.user.info.group,
+            }).then((response) => {
+                if (response.data.code === 1) {
+                    for (let i = response.data.data.length - 1; i >= 0; i--) {
+                        cmd_context.res.unshift(" ");
+                        formatFile(response.data.data[i]);
+                    }
+                    cmd_context.context.unshift(" ");
+                    if (store.state.user.info.curPath == '/') {
+                        cmd_context.context.unshift(store.state.user.info.curPath + 'dir ' + path);
+                    } else {
+                        cmd_context.context.unshift(store.state.user.info.curPath + '/' + 'dir ' + path);
+                    }
+                }
+                else {
+                    ElNotification({
+                        title: '发生错误',
+                        message: response.data.msg,
+                        type: 'error',
+                    })
+                }
+            }).catch(error => console.log(error));
+            cmd.value = "";
+        }
 
-        let dir = () => {
-
+        let check = () => {
+            axios.post('/api/sys/check', {
+                'group': store.state.user.info.group,
+            }).then((response) => {
+                if (response.data.code === 1) {
+                    cmd_context.res.unshift(" ");
+                    cmd_context.res.unshift(response.data.data);
+                    cmd_context.context.unshift(" ");
+                    if (store.state.user.info.curPath == '/') {
+                        cmd_context.context.unshift(store.state.user.info.curPath + 'check');
+                    } else {
+                        cmd_context.context.unshift(store.state.user.info.curPath + '/' + 'check');
+                    }
+                }
+                else {
+                    ElNotification({
+                        title: '发生错误',
+                        message: response.data.msg,
+                        type: 'error',
+                    })
+                }
+            }).catch(error => console.log(error));
+            cmd.value = "";
+        }
+        let save = () => {
+            axios.post('/api/sys/save', {
+                'group': store.state.user.info.group,
+            }).then((response) => {
+                if (response.data.code === 1) {
+                    cmd_context.res.unshift(" ");
+                    cmd_context.res.unshift(response.data.data);
+                    cmd_context.context.unshift(" ");
+                    if (store.state.user.info.curPath == '/') {
+                        cmd_context.context.unshift(store.state.user.info.curPath + 'save');
+                    } else {
+                        cmd_context.context.unshift(store.state.user.info.curPath + '/' + 'save');
+                    }
+                }
+                else {
+                    ElNotification({
+                        title: '发生错误',
+                        message: response.data.msg,
+                        type: 'error',
+                    })
+                }
+            }).catch(error => console.log(error));
+            cmd.value = "";
         }
 
 

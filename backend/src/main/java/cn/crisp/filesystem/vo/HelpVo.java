@@ -11,7 +11,7 @@ import java.util.List;
 @AllArgsConstructor
 @NoArgsConstructor
 public class HelpVo implements Serializable {
-    public static final long serialVersionUID = 10L;
+    public static final long serialVersionUID = 12L;
     private List<String> CMDList;
     private List<String> CMDDescription;
 }

@@ -2,6 +2,7 @@ package cn.crisp.filesystem.controller;
 
 import cn.crisp.filesystem.common.R;
 import cn.crisp.filesystem.dto.ChangePathDto;
+import cn.crisp.filesystem.dto.GroupDto;
 import cn.crisp.filesystem.dto.LoginDto;
 import cn.crisp.filesystem.entity.DirTree;
 import cn.crisp.filesystem.entity.User;
@@ -33,11 +34,26 @@ public class SystemController {
     @Autowired
     FileSystemService fileSystemService;
 
-    @GetMapping("/test")
-    public R<FileSystem> test() {
-        fileSystem = fileSystemService.test(fileSystem);
-        return R.success(fileSystem);
+    @ApiOperation("恢复文件系统")
+    @PostMapping("/check")
+    public R<String> check(@RequestBody GroupDto groupDto) {
+        if (!"root".equals(groupDto.getGroup())) {
+            return R.error("没有恢复权限");
+        }
+        fileSystem = fileSystemService.check(fileSystem);
+        return R.success("读取成功");
     }
+
+    @ApiOperation("保存文件系统")
+    @PostMapping("/save")
+    public R<String> save(@RequestBody GroupDto groupDto) {
+        if (!"root".equals(groupDto.getGroup())) {
+            return R.error("没有保存权限");
+        }
+        fileSystemService.save(fileSystem);
+        return R.success("保存成功");
+    }
+
 
     @ApiOperation("用户登录")
     @PostMapping("/login")
@@ -75,87 +91,17 @@ public class SystemController {
     @ApiOperation("改变目录")
     @PostMapping("/cd")
     public R<String> cd(@RequestBody ChangePathDto changePathDto) {
-        if(StringUtils.isEmpty(changePathDto.getPath())) return R.error("路径不能为空");
-        if(Objects.equals(changePathDto.getPath(), "/")) {
-            if (Objects.equals(changePathDto.getGroup(), "root")) {
-                return R.success("/");
-            }
-            return R.error("没有权限");
-        }
-
-        String[] paths = changePathDto.getPath().split("/");
-        if (paths.length == 0) return R.error("路径不能为空");
-        //全局路径，相对路径由前端拼凑
-        if (paths[0].length() == 0) {
-            Deque<String> deque = new ArrayDeque<>();;
-            DirTree root = fileSystem.getDirTree();
-            DirTree p = root;
-            for (int i = 1; i < paths.length; i ++) {
-                //判断文件夹是否存在
-                if(Objects.equals(paths[i], ".")) {
-                    continue;
-                }
-                if(Objects.equals(paths[i], "..")) {
-                    if (p.getParent() == null) {
-                        return R.error("路径错误，你在写尼玛");
-                    }
-                    deque.removeLast();
-                    p = p.getParent();
-                    continue;
-                }
-                boolean f = false;
-                for (DirTree dirTree : p.getNext()) {
-                    if (Objects.equals(dirTree.getInode().getName(), paths[i])) {
-                        f = true;
-                        p = dirTree;
-                        break;
-                    }
-                }
-
-                if (!f) {
-                    return R.error("目录" + paths[i] + " 不存在");
-                }
-
-                //1为用户目录，需要特判
-                if (p.getParent() == root) {
-                    String fG = "";
-                    for(User user : fileSystem.getBootBlock().getUserList()) {
-                        if (Objects.equals(user.getUsername(), p.getInode().getCreateBy())) {
-                            fG = user.getGroup();
-                            break;
-                        }
-                    }
-                    if (!(Objects.equals(fG, changePathDto.getGroup()) || Objects.equals(changePathDto.getGroup(), "root"))) {
-                        return R.error("没有权限进入别用户组的用户目录");
-                    }
-                }
-
-                //不是目录，特判
-                if (p.getInode().getIsDir() == 0) {
-                    return R.error(paths[i] + "非目录");
-                }
-                deque.addLast("/" + paths[i]);
-            }
-            StringBuilder ret = new StringBuilder();
-            while (deque.size() > 0) {
-                ret.append(deque.getFirst());
-                deque.removeFirst();
-            }
-            if(ret.length() == 0) {
-                if(!Objects.equals(changePathDto.getGroup(), "root")) {
-                    return R.error("没有权限");
-                }
-                ret.append("/");
-            }
-            return R.success(ret.toString());
-        }
-
-        return R.error("路径错误");
+        return fileSystemService.checkDir(changePathDto, fileSystem);
     }
 
     @ApiOperation("查询目录内容")
-    @GetMapping("dir")
-    public R<List<FileVo>> dir(@RequestParam String path) {
+    @PostMapping("dir")
+    public R<List<FileVo>> dir(@RequestBody ChangePathDto changePathDto) {
+        R<String> tmp = fileSystemService.checkDir(changePathDto, fileSystem);
+        if (tmp.getCode() == 0) {
+            return R.error(tmp.getMsg());
+        }
+        String path = tmp.getData();
         List<FileVo> ret = new ArrayList<>();
         String[] t = path.split("/");
         DirTree p = fileSystem.getDirTree();
