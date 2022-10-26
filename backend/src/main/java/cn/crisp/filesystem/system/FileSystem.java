@@ -22,6 +22,7 @@ public class FileSystem implements Serializable {
     private  BootBlock bootBlock;
     private SuperBlock superBlock ;
     private ConcurrentHashMap<Integer, Inode> inodes;
+    private ConcurrentHashMap<Integer, String> blockInfo;
     private DirTree dirTree;
 
     public  FileSystem() throws Exception {

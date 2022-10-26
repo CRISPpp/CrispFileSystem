@@ -4,7 +4,7 @@ import cn.crisp.filesystem.common.R;
 import cn.crisp.filesystem.dto.ChangePathDto;
 import cn.crisp.filesystem.dto.GroupDto;
 import cn.crisp.filesystem.dto.LoginDto;
-import cn.crisp.filesystem.entity.DirTree;
+import cn.crisp.filesystem.dto.MakeDirDto;
 import cn.crisp.filesystem.entity.User;
 import cn.crisp.filesystem.service.FileSystemService;
 import cn.crisp.filesystem.system.FileSystem;
@@ -13,7 +13,6 @@ import cn.crisp.filesystem.vo.HelpVo;
 import cn.crisp.filesystem.vo.UserVo;
 import io.swagger.annotations.Api;
 import io.swagger.annotations.ApiOperation;
-import org.apache.commons.lang3.StringUtils;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.*;
 
@@ -118,5 +117,35 @@ public class SystemController {
         List<FileVo> ret = fileSystemService.getDirs(path, fileSystem);
 
         return R.success(ret);
+    }
+
+    @ApiOperation("创建目录")
+    @PostMapping("/md")
+    public R<String> md(@RequestBody MakeDirDto makeDirDto) {
+        StringBuilder tmpPath = new StringBuilder();
+
+        int idx = makeDirDto.getPath().length() - 1;
+
+        while(idx >= 0 && makeDirDto.getPath().charAt(idx) != '/') {
+            idx--;
+        }
+
+        StringBuilder fileName = new StringBuilder();
+
+        for (int i = idx + 1; i < makeDirDto.getPath().length(); i ++) {
+            fileName.append(makeDirDto.getPath().charAt(i));
+        }
+
+        for (int i = 0; i < idx; i ++) {
+            tmpPath.append(makeDirDto.getPath().charAt(i));
+        }
+
+        R<String> tmp = fileSystemService.checkDir(new ChangePathDto(tmpPath.toString(), makeDirDto.getUsername(), makeDirDto.getGroup()), fileSystem);
+        if (tmp.getCode() == 0) {
+            return R.error(tmp.getMsg());
+        }
+        String path = tmp.getData();
+
+        return fileSystemService.makeDir(fileSystem, path, makeDirDto.getUsername(), fileName.toString());
     }
 }

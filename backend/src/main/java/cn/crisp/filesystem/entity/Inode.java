@@ -22,7 +22,7 @@ public class Inode implements Serializable {
     private String limit; // 9 byte 权限
 
     public Inode() {
-        id = 0;
+        id = -1;
         name = "";
         isDir = 0;
         length = 0;

@@ -3,6 +3,7 @@ package cn.crisp.filesystem.service;
 import cn.crisp.filesystem.common.R;
 import cn.crisp.filesystem.dto.ChangePathDto;
 import cn.crisp.filesystem.entity.DirTree;
+import cn.crisp.filesystem.entity.Inode;
 import cn.crisp.filesystem.entity.User;
 import cn.crisp.filesystem.system.FileSystem;
 import cn.crisp.filesystem.vo.FileVo;
@@ -13,8 +14,7 @@ import org.springframework.stereotype.Service;
 import java.io.*;
 import java.util.*;
 
-import static cn.crisp.filesystem.common.Constants.DISK;
-import static cn.crisp.filesystem.common.Constants.TotalSize;
+import static cn.crisp.filesystem.common.Constants.*;
 
 @Slf4j
 @Service
@@ -242,5 +242,50 @@ public class FileSystemService {
             }
         }
         return ret;
+    }
+
+    //创建目录
+    public R<String> makeDir(FileSystem fileSystem, String path, String username, String filename) {
+        String[] t = path.split("/");
+        DirTree p = fileSystem.getDirTree();
+        for (String s : t) {
+            for (DirTree d : p.getNext()) {
+                if (Objects.equals(d.getInode().getName(), s)) {
+                    p = d;
+                    break;
+                }
+            }
+        }
+
+        for (DirTree d : p.getNext()) {
+            if (d.getInode().getName().equals(filename)) {
+                return R.error("该文件名已被使用");
+            }
+        }
+
+        Inode inode = new Inode();
+        //检测哪块空闲
+        for (int i = 0; i < InodeNum; i++) {
+            if (!fileSystem.getSuperBlock().getInodeMap().getInodeMap()[i]) {
+                fileSystem.getSuperBlock().getInodeMap().getInodeMap()[i] = true;
+                inode.setId(i);
+                break;
+            }
+        }
+        if (inode.getId() == -1) return R.error("没有空闲的inode块");
+
+        fileSystem.getSuperBlock().setInodeNum(fileSystem.getSuperBlock().getInodeNum() + 1);
+        inode.setName(filename);
+        inode.setCreateBy(username);
+        inode.setIsDir(1);
+        fileSystem.getInodes().put(inode.getId(), inode);
+
+        //加入根目录
+        DirTree tmpDirTree = new DirTree(p);
+        tmpDirTree.setInode(inode);
+        p.getNext().add(tmpDirTree);
+        p.getInode().setLength(p.getInode().getLength() + 1);
+
+        return R.success("创建成功");
     }
 }
