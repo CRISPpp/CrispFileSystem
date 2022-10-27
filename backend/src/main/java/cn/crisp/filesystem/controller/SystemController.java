@@ -1,10 +1,8 @@
 package cn.crisp.filesystem.controller;
 
 import cn.crisp.filesystem.common.R;
-import cn.crisp.filesystem.dto.ChangePathDto;
-import cn.crisp.filesystem.dto.GroupDto;
-import cn.crisp.filesystem.dto.LoginDto;
-import cn.crisp.filesystem.dto.MakeDirDto;
+import cn.crisp.filesystem.dto.*;
+import cn.crisp.filesystem.entity.DirTree;
 import cn.crisp.filesystem.entity.User;
 import cn.crisp.filesystem.service.FileSystemService;
 import cn.crisp.filesystem.system.FileSystem;
@@ -27,8 +25,6 @@ import static cn.crisp.filesystem.common.Constants.CMDList;
 public class SystemController {
     @Autowired
     FileSystem fileSystem;
-
-
 
     @Autowired
     FileSystemService fileSystemService;
@@ -139,7 +135,7 @@ public class SystemController {
         for (int i = 0; i < idx; i ++) {
             tmpPath.append(makeDirDto.getPath().charAt(i));
         }
-
+        if(tmpPath.isEmpty()) tmpPath.append("/");
         R<String> tmp = fileSystemService.checkDir(new ChangePathDto(tmpPath.toString(), makeDirDto.getUsername(), makeDirDto.getGroup()), fileSystem);
         if (tmp.getCode() == 0) {
             return R.error(tmp.getMsg());
@@ -147,5 +143,26 @@ public class SystemController {
         String path = tmp.getData();
 
         return fileSystemService.makeDir(fileSystem, path, makeDirDto.getUsername(), fileName.toString());
+    }
+
+    @ApiOperation("删除目录")
+    @PostMapping("/rd")
+    public R<Integer> rd(@RequestBody RemoveDirDto removeDirDto) {
+        R<String> tmp = fileSystemService.checkDir(new ChangePathDto(removeDirDto.getPath(), removeDirDto.getUsername(), removeDirDto.getGroup()), fileSystem);
+        if (tmp.getCode() == 0) {
+            return R.error(tmp.getMsg());
+        }
+        String path = tmp.getData();
+
+        R<DirTree> tmp1 = fileSystemService.checkFilesBelong(path, removeDirDto.getUsername(), fileSystem);
+        if (tmp1.getCode() == 0) {
+            return R.error(tmp1.getMsg());
+        }
+
+        Integer ret = fileSystemService.removeDir(tmp1.getData(), fileSystem);
+
+        fileSystem = fileSystemService.removeFromParent(fileSystem, path);
+
+        return R.success(ret);
     }
 }

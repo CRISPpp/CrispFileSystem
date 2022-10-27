@@ -55,12 +55,13 @@ public class FileSystem implements Serializable {
 
             superBlock.setInodeNum(superBlock.getInodeNum() + 1);
             inode.setName(user.getUsername());
-            inode.setCreateBy("system");
+            inode.setCreateBy(user.getUsername());
             inode.setIsDir(1);
             inodes.put(inode.getId(), inode);
 
             //加入根目录
-            DirTree tmpDirTree = new DirTree(dirTree);
+            DirTree tmpDirTree = new DirTree();
+            tmpDirTree.setParent(dirTree);
             tmpDirTree.setInode(inode);
             dirTree.getNext().add(tmpDirTree);
             dirTree.getInode().setLength(dirTree.getInode().getLength() + 1);

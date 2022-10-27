@@ -154,6 +154,7 @@ public class FileSystemService {
                             break;
                         }
                     }
+
                     if (!(Objects.equals(fG, changePathDto.getGroup()) || Objects.equals(changePathDto.getGroup(), "root"))) {
                         return R.error("没有权限进入别用户组的用户目录");
                     }
@@ -281,11 +282,123 @@ public class FileSystemService {
         fileSystem.getInodes().put(inode.getId(), inode);
 
         //加入根目录
-        DirTree tmpDirTree = new DirTree(p);
+        DirTree tmpDirTree = new DirTree();
+        tmpDirTree.setParent(p);
         tmpDirTree.setInode(inode);
         p.getNext().add(tmpDirTree);
         p.getInode().setLength(p.getInode().getLength() + 1);
 
         return R.success("创建成功");
+    }
+
+
+    //判断目录下以及该目录是否有文件不属于该用户，采用bfs
+    public R<DirTree> checkFilesBelong(String path, String username, FileSystem fileSystem) {
+        String[] t = path.split("/");
+        DirTree p = fileSystem.getDirTree();
+        for (String s : t) {
+            for (DirTree d : p.getNext()) {
+                if (Objects.equals(d.getInode().getName(), s)) {
+                    p = d;
+                    break;
+                }
+            }
+        }
+
+        if ("root".equals(username) || "system".equals(username)) {
+            return R.success(p);
+        }
+
+        Deque<DirTree> deque = new ArrayDeque<>();
+        deque.addLast(p);
+
+        while (deque.size() > 0) {
+            DirTree d = deque.getFirst();
+            deque.removeFirst();
+            if (!d.getInode().getCreateBy().equals(username)) {
+                return R.error("用户: " + username + "没有权限删除 " + d.getInode().getName());
+            }
+
+            for (DirTree son : d.getNext()) {
+                deque.addLast(son);
+            }
+        }
+
+        return R.success(p);
+    }
+
+    //删除目录及目录下的内容，递归删除
+    public Integer removeDir(DirTree dirTree,  FileSystem fileSystem) {
+        Integer ret = 1;
+
+        for (DirTree d : dirTree.getNext()) {
+            ret += removeDir(d, fileSystem);
+        }
+
+
+        dirTree.setParent(null);
+
+        Inode inode = dirTree.getInode();
+        fileSystem.getInodes().remove(inode.getId());
+        fileSystem.getSuperBlock().setInodeNum(fileSystem.getSuperBlock().getInodeNum() - 1);
+        fileSystem.getSuperBlock().getInodeMap().getInodeMap()[inode.getId()] = false;
+
+        //删除直接索引
+        for (int i = 0; i < 10; i++) {
+            if (inode.getAddress()[i] == -1) {
+                break;
+            }
+            fileSystem.getBlockInfo().remove(inode.getAddress()[i]);
+            fileSystem.getSuperBlock().setBlockNum(fileSystem.getSuperBlock().getBlockNum() - 1);
+            fileSystem.getSuperBlock().setBlockFree(fileSystem.getSuperBlock().getBlockFree() + 1);
+            fileSystem.getSuperBlock().setLastBlockSize(fileSystem.getSuperBlock().getLastBlockSize() + BlockSize);
+            fileSystem.getSuperBlock().getBlockMap().getBlockMap()[inode.getAddress()[i]] = false;
+            inode.getAddress()[i] = -1;
+        }
+
+
+        //删除间接索引, 间接索引格式"1,2,3,"
+        if (inode.getAddress()[10] != -1) {
+            String info = fileSystem.getBlockInfo().get(inode.getAddress()[10]);
+
+            fileSystem.getBlockInfo().remove(inode.getAddress()[10]);
+            fileSystem.getSuperBlock().setBlockNum(fileSystem.getSuperBlock().getBlockNum() - 1);
+            fileSystem.getSuperBlock().setBlockFree(fileSystem.getSuperBlock().getBlockFree() + 1);
+            fileSystem.getSuperBlock().setLastBlockSize(fileSystem.getSuperBlock().getLastBlockSize() + BlockSize);
+            fileSystem.getSuperBlock().getBlockMap().getBlockMap()[inode.getAddress()[10]] = false;
+            inode.getAddress()[10] = -1;
+
+            String[] blocks = info.split(",");
+
+            for (String block : blocks) {
+                int curBlock = Integer.parseInt(block);
+                fileSystem.getBlockInfo().remove(curBlock);
+                fileSystem.getSuperBlock().setBlockNum(fileSystem.getSuperBlock().getBlockNum() - 1);
+                fileSystem.getSuperBlock().setBlockFree(fileSystem.getSuperBlock().getBlockFree() + 1);
+                fileSystem.getSuperBlock().setLastBlockSize(fileSystem.getSuperBlock().getLastBlockSize() + BlockSize);
+                fileSystem.getSuperBlock().getBlockMap().getBlockMap()[curBlock] = false;
+            }
+        }
+
+
+        return ret;
+    }
+
+    //从父节点移除该结点
+    public FileSystem removeFromParent(FileSystem fileSystem, String path) {
+        String[] t = path.split("/");
+        DirTree p = fileSystem.getDirTree();
+        DirTree lst = p;
+        for (String s : t) {
+            for (DirTree d : p.getNext()) {
+                if (Objects.equals(d.getInode().getName(), s)) {
+                    lst = p;
+                    p = d;
+                    break;
+                }
+            }
+        }
+        lst.getNext().remove(p);
+        return fileSystem;
     }
 }

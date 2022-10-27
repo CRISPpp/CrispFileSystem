@@ -2,6 +2,7 @@ package cn.crisp.filesystem.entity;
 
 import lombok.AllArgsConstructor;
 import lombok.Data;
+import lombok.NoArgsConstructor;
 
 import java.io.Serializable;
 import java.util.ArrayList;
@@ -13,7 +14,7 @@ public class DirTree implements Serializable {
     public static final long serialVersionUID = 9L;
     private Inode inode;
     private List<DirTree> next;
-    private DirTree parent;
+    private DirTree parent = null;
 
     public DirTree() {
         inode = new Inode();
@@ -21,9 +22,8 @@ public class DirTree implements Serializable {
         parent = null;
     }
 
-    public DirTree(DirTree tree) {
-        inode = new Inode();
-        next = new ArrayList<>();
-        parent = tree;
+    public String toString() {
+        return "inode: " + inode.toString() + "      next: " + next.toString();
     }
+
 }

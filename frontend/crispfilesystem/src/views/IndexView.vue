@@ -36,6 +36,18 @@
                 </div>
             </div>
         </div>
+
+        <el-dialog v-model="rdConfirm" title="Tips" width="30%">
+            <span>目录非空,确定要删除吗</span>
+            <template #footer>
+                <span class="dialog-footer">
+                    <el-button @click="rdConfirm = false">取消</el-button>
+                    <el-button type="primary" @click="handleRd">
+                        确认
+                    </el-button>
+                </span>
+            </template>
+        </el-dialog>
     </div>
 </template>
 
@@ -49,6 +61,7 @@ import { ElNotification } from 'element-plus'
 export default {
     name: "IndexView",
     setup() {
+        let rdConfirm = ref(false);
         let cmd = ref('');
         let store = useStore();
         let cmd_context = reactive({
@@ -159,6 +172,20 @@ export default {
                 }
                 else {
                     md(mark[1]);
+                }
+            }
+
+            else if (mark[0] == "rd") {
+                if (mark.length !== 2) {
+                    ElNotification({
+                        title: '指令错误',
+                        message: "请检查指令或者输入help查看指令信息",
+                        type: 'error',
+                    })
+                    cmd.value = "";
+                }
+                else {
+                    rd(mark[1]);
                 }
             }
 
@@ -294,6 +321,7 @@ export default {
                     path = store.state.user.info.curPath + '/' + path;
                 }
             }
+
             axios.post('/api/sys/dir', {
                 'path': path,
                 'username': store.state.user.info.username,
@@ -440,12 +468,87 @@ export default {
             cmd.value = "";
         }
 
+        let handleRd = () => {
+            rdRequest();
+            rdConfirm.value = false;
+        }
+        let rdTmpPath = "";
+        let rdRequest = () => {
+            axios.post('/api/sys/rd', {
+                'path': rdTmpPath,
+                'username': store.state.user.info.username,
+                'group': store.state.user.info.group,
+            }).then((response) => {
+                if (response.data.code === 1) {
+                    cmd_context.res.unshift(" ");
+                    cmd_context.res.unshift('删除成功, 删除 ' + response.data.data + ' 个文件');
+
+                    cmd_context.context.unshift(" ");
+                    if (store.state.user.info.curPath == '/') {
+                        cmd_context.context.unshift(store.state.user.info.curPath + 'rd' + rdTmpPath);
+                    } else {
+                        cmd_context.context.unshift(store.state.user.info.curPath + '/' + 'md' + rdTmpPath);
+                    }
+                }
+                else {
+                    ElNotification({
+                        title: '发生错误',
+                        message: response.data.msg,
+                        type: 'error',
+                    })
+                }
+            }).catch(error => console.log(error));
+        }
+        let rd = (path) => {
+            if (path[0] != '/') {
+                if (store.state.user.info.curPath == "/") {
+                    path = store.state.user.info.curPath + path;
+                } else {
+                    path = store.state.user.info.curPath + '/' + path;
+                }
+            }
+            rdTmpPath = path;
+            //判断文件夹下是否为空
+            axios.post('/api/sys/dir', {
+                'path': path,
+                'username': store.state.user.info.username,
+                'group': store.state.user.info.group,
+            }).then((response) => {
+                if (response.data.code === 1) {
+                    if (response.data.data.length > 0) {
+                        rdConfirm.value = true;
+                    } else {
+                        rdRequest();
+                    }
+
+                    cmd_context.context.unshift(" ");
+                    if (store.state.user.info.curPath == '/') {
+                        cmd_context.context.unshift(store.state.user.info.curPath + 'rd ' + path);
+                    } else {
+                        cmd_context.context.unshift(store.state.user.info.curPath + '/' + 'rd ' + path);
+                    }
+                }
+                else {
+                    ElNotification({
+                        title: '发生错误',
+                        message: response.data.msg,
+                        type: 'error',
+                    })
+                }
+            }).catch(error => console.log(error));
+
+
+            cmd.value = "";
+        }
+
         return {
+            rdConfirm,
             store,
             logout,
             cmd,
             cmd_context,
             handleCMD,
+            handleRd,
         }
     }
 
