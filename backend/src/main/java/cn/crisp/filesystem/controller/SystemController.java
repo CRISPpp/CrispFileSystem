@@ -165,4 +165,34 @@ public class SystemController {
 
         return R.success(ret);
     }
+
+    @ApiOperation("创建文件")
+    @PostMapping("/newfile")
+    public R<String> newfile(@RequestBody NewFileDto newFileDto) {
+        StringBuilder tmpPath = new StringBuilder();
+
+        int idx = newFileDto.getPath().length() - 1;
+
+        while(idx >= 0 && newFileDto.getPath().charAt(idx) != '/') {
+            idx--;
+        }
+
+        StringBuilder fileName = new StringBuilder();
+
+        for (int i = idx + 1; i < newFileDto.getPath().length(); i ++) {
+            fileName.append(newFileDto.getPath().charAt(i));
+        }
+
+        for (int i = 0; i < idx; i ++) {
+            tmpPath.append(newFileDto.getPath().charAt(i));
+        }
+        if(tmpPath.isEmpty()) tmpPath.append("/");
+        R<String> tmp = fileSystemService.checkDir(new ChangePathDto(tmpPath.toString(), newFileDto.getUsername(), newFileDto.getGroup()), fileSystem);
+        if (tmp.getCode() == 0) {
+            return R.error(tmp.getMsg());
+        }
+        String path = tmp.getData();
+
+        return fileSystemService.newFile(fileSystem, path, newFileDto.getUsername(), fileName.toString());
+    }
 }

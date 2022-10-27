@@ -189,6 +189,20 @@ export default {
                 }
             }
 
+            else if (mark[0] == "newfile") {
+                if (mark.length !== 2) {
+                    ElNotification({
+                        title: '指令错误',
+                        message: "请检查指令或者输入help查看指令信息",
+                        type: 'error',
+                    })
+                    cmd.value = "";
+                }
+                else {
+                    newfile(mark[1]);
+                }
+            }
+
             else {
                 ElNotification({
                     title: '指令错误',
@@ -538,6 +552,41 @@ export default {
             }).catch(error => console.log(error));
 
 
+            cmd.value = "";
+        }
+
+
+        let newfile = (path) => {
+            if (path[0] != '/') {
+                if (store.state.user.info.curPath == "/") {
+                    path = store.state.user.info.curPath + path;
+                } else {
+                    path = store.state.user.info.curPath + '/' + path;
+                }
+            }
+            axios.post('/api/sys/newfile', {
+                'path': path,
+                'username': store.state.user.info.username,
+                'group': store.state.user.info.group,
+            }).then((response) => {
+                if (response.data.code === 1) {
+                    cmd_context.res.unshift(" ");
+                    cmd_context.res.unshift(response.data.data);
+                    cmd_context.context.unshift(" ");
+                    if (store.state.user.info.curPath == '/') {
+                        cmd_context.context.unshift(store.state.user.info.curPath + 'newfile' + path);
+                    } else {
+                        cmd_context.context.unshift(store.state.user.info.curPath + '/' + 'newfile' + path);
+                    }
+                }
+                else {
+                    ElNotification({
+                        title: '发生错误',
+                        message: response.data.msg,
+                        type: 'error',
+                    })
+                }
+            }).catch(error => console.log(error));
             cmd.value = "";
         }
 
