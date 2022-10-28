@@ -481,6 +481,7 @@ public class FileSystemService {
             return R.error(inode.getName() + "为目录");
         }
 
+
         StringBuilder ret = new StringBuilder();
 
         //读取直接索引
@@ -502,4 +503,161 @@ public class FileSystemService {
         return R.success(ret.toString());
     }
 
+
+    //写入文件
+    public R<String> writeFile(FileSystem fileSystem, String path, String group,String filename, String data) {
+        String[] t = path.split("/");
+        DirTree p = fileSystem.getDirTree();
+        for (String s : t) {
+            for (DirTree d : p.getNext()) {
+                if (Objects.equals(d.getInode().getName(), s)) {
+                    p = d;
+                    break;
+                }
+            }
+        }
+
+        Inode inode = new Inode();
+
+        for (DirTree d : p.getNext()) {
+            if (d.getInode().getName().equals(filename)) {
+                inode = d.getInode();
+                break;
+            }
+        }
+
+        if (inode.getId() == -1) {
+            return R.error("改文件不存在");
+        }
+
+        if (inode.getIsDir() == 1) {
+            return R.error(inode.getName() + "为目录");
+        }
+
+        String fG = "";
+
+        for (User user : fileSystem.getBootBlock().getUserList()) {
+            if (user.getUsername().equals(inode.getCreateBy())) {
+                fG = user.getGroup();
+            }
+        }
+
+        if (!fG.equals(group)) {
+            return R.error("没有权限写入别的组的用户文件");
+        }
+
+        //先从系统中移除对应的文件
+        //删除直接索引
+        for (int i = 0; i < 10; i++) {
+            if (inode.getAddress()[i] == -1) {
+                break;
+            }
+            fileSystem.getBlockInfo().remove(inode.getAddress()[i]);
+            fileSystem.getSuperBlock().setBlockNum(fileSystem.getSuperBlock().getBlockNum() - 1);
+            fileSystem.getSuperBlock().setBlockFree(fileSystem.getSuperBlock().getBlockFree() + 1);
+            fileSystem.getSuperBlock().setLastBlockSize(fileSystem.getSuperBlock().getLastBlockSize() + BlockSize);
+            fileSystem.getSuperBlock().getBlockMap().getBlockMap()[inode.getAddress()[i]] = false;
+            inode.getAddress()[i] = -1;
+        }
+
+
+        //删除间接索引, 间接索引格式"1,2,3,"
+        if (inode.getAddress()[10] != -1) {
+            String info = fileSystem.getBlockInfo().get(inode.getAddress()[10]);
+
+            fileSystem.getBlockInfo().remove(inode.getAddress()[10]);
+            fileSystem.getSuperBlock().setBlockNum(fileSystem.getSuperBlock().getBlockNum() - 1);
+            fileSystem.getSuperBlock().setBlockFree(fileSystem.getSuperBlock().getBlockFree() + 1);
+            fileSystem.getSuperBlock().setLastBlockSize(fileSystem.getSuperBlock().getLastBlockSize() + BlockSize);
+            fileSystem.getSuperBlock().getBlockMap().getBlockMap()[inode.getAddress()[10]] = false;
+            inode.getAddress()[10] = -1;
+
+            String[] blocks = info.split(",");
+
+            for (String block : blocks) {
+                int curBlock = Integer.parseInt(block);
+                fileSystem.getBlockInfo().remove(curBlock);
+                fileSystem.getSuperBlock().setBlockNum(fileSystem.getSuperBlock().getBlockNum() - 1);
+                fileSystem.getSuperBlock().setBlockFree(fileSystem.getSuperBlock().getBlockFree() + 1);
+                fileSystem.getSuperBlock().setLastBlockSize(fileSystem.getSuperBlock().getLastBlockSize() + BlockSize);
+                fileSystem.getSuperBlock().getBlockMap().getBlockMap()[curBlock] = false;
+            }
+        }
+
+
+        //写入文件
+        int fileIdx = 0;
+        int addressIdx = 0;
+
+        while (fileIdx < data.length()) {
+            int right = Math.min(data.length(), fileIdx + BlockSize);
+            int newBlockIdx = -1;
+
+            for (int i = 0; i < fileSystem.getSuperBlock().getBlockMap().getBlockMap().length; i ++) {
+                if (!fileSystem.getSuperBlock().getBlockMap().getBlockMap()[i]) {
+                    fileSystem.getSuperBlock().getBlockMap().getBlockMap()[i] = true;
+                    newBlockIdx = i;
+                    break;
+                }
+            }
+
+            if (newBlockIdx == -1) return R.error("磁盘空间不够，部分内容写入失败");
+
+            //直接索引
+            if (addressIdx < 10) {
+                inode.getAddress()[addressIdx] = newBlockIdx;
+
+                fileSystem.getBlockInfo().put(newBlockIdx, data.substring(fileIdx, right));
+                fileSystem.getSuperBlock().setBlockNum(fileSystem.getSuperBlock().getBlockNum() + 1);
+                fileSystem.getSuperBlock().setBlockFree(fileSystem.getSuperBlock().getBlockFree() - 1);
+                fileSystem.getSuperBlock().setLastBlockSize(fileSystem.getSuperBlock().getLastBlockSize() - BlockSize);
+
+                addressIdx++;
+
+            }
+            else {
+                //间接索引
+                //没有分配则直接分配间接索引结点
+                if (inode.getAddress()[10] == -1) {
+                    int newDataBlock = -1;
+
+                    for (int i = 0; i < fileSystem.getSuperBlock().getBlockMap().getBlockMap().length; i ++) {
+                        if (!fileSystem.getSuperBlock().getBlockMap().getBlockMap()[i]) {
+                            fileSystem.getSuperBlock().getBlockMap().getBlockMap()[i] = true;
+                            newDataBlock = i;
+                            break;
+                        }
+                    }
+
+                    if (newDataBlock == -1) return R.error("磁盘空间不够，部分内容写入失败");
+
+                    //先分配间接索引结点
+                    inode.getAddress()[addressIdx] = newBlockIdx;
+                    fileSystem.getBlockInfo().put(newBlockIdx, String.valueOf(newDataBlock) + ",");
+                    fileSystem.getSuperBlock().setBlockNum(fileSystem.getSuperBlock().getBlockNum() + 1);
+                    fileSystem.getSuperBlock().setBlockFree(fileSystem.getSuperBlock().getBlockFree() - 1);
+                    fileSystem.getSuperBlock().setLastBlockSize(fileSystem.getSuperBlock().getLastBlockSize() - BlockSize);
+
+                    //再分配数据结点
+                    fileSystem.getBlockInfo().put(newDataBlock, data.substring(fileIdx, right));
+                    fileSystem.getSuperBlock().setBlockNum(fileSystem.getSuperBlock().getBlockNum() + 1);
+                    fileSystem.getSuperBlock().setBlockFree(fileSystem.getSuperBlock().getBlockFree() - 1);
+                    fileSystem.getSuperBlock().setLastBlockSize(fileSystem.getSuperBlock().getLastBlockSize() - BlockSize);
+                }
+                else {
+                    //否则先修改原来的间接结点，再写入磁盘块
+                    fileSystem.getBlockInfo().put(inode.getAddress()[10], fileSystem.getBlockInfo().get(inode.getAddress()[10]) + String.valueOf(newBlockIdx) + ",");
+                    fileSystem.getBlockInfo().put(newBlockIdx, data.substring(fileIdx, right));
+                    fileSystem.getSuperBlock().setBlockNum(fileSystem.getSuperBlock().getBlockNum() + 1);
+                    fileSystem.getSuperBlock().setBlockFree(fileSystem.getSuperBlock().getBlockFree() - 1);
+                    fileSystem.getSuperBlock().setLastBlockSize(fileSystem.getSuperBlock().getLastBlockSize() - BlockSize);
+                }
+            }
+
+            fileIdx = right;
+        }
+        inode.setLength(data.length());
+
+        return R.success("写入文件成功");
+    }
 }

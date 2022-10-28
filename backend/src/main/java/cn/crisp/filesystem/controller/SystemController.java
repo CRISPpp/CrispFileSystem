@@ -226,6 +226,39 @@ public class SystemController {
         }
         String path = tmp.getData();
 
+
         return fileSystemService.catFile(fileSystem, path, catDto.getGroup(), fileName.toString());
+    }
+
+
+    @ApiOperation("写入文件")
+    @PostMapping("/writeFile")
+    public R<String> writeFile(@RequestBody WriteDto writeDto) {
+        StringBuilder tmpPath = new StringBuilder();
+
+        int idx = writeDto.getPath().length() - 1;
+
+        while(idx >= 0 && writeDto.getPath().charAt(idx) != '/') {
+            idx--;
+        }
+
+        StringBuilder fileName = new StringBuilder();
+
+        for (int i = idx + 1; i < writeDto.getPath().length(); i ++) {
+            fileName.append(writeDto.getPath().charAt(i));
+        }
+
+        for (int i = 0; i < idx; i ++) {
+            tmpPath.append(writeDto.getPath().charAt(i));
+        }
+        if(tmpPath.isEmpty()) tmpPath.append("/");
+
+        R<String> tmp = fileSystemService.checkDir(new ChangePathDto(tmpPath.toString(), writeDto.getUsername(), writeDto.getGroup()), fileSystem);
+        if (tmp.getCode() == 0) {
+            return R.error(tmp.getMsg());
+        }
+        String path = tmp.getData();
+
+        return fileSystemService.writeFile(fileSystem, path, writeDto.getGroup(), fileName.toString(), writeDto.getData());
     }
 }

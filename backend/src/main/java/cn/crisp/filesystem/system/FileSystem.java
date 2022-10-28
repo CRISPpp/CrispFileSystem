@@ -29,6 +29,7 @@ public class FileSystem implements Serializable {
         bootBlock = new BootBlock();
         superBlock = new SuperBlock();
         inodes = new ConcurrentHashMap<>();
+        blockInfo = new ConcurrentHashMap<>();
         dirTree = new DirTree();
 
         //创建根结点

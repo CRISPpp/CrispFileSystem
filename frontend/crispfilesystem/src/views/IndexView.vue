@@ -55,7 +55,7 @@
                 <span class="dialog-footer">
                     <el-button @click="catMark = false">取消</el-button>
                     <el-button type="primary" @click="handleCatFile">
-                        确认
+                        写入文件
                     </el-button>
                 </span>
             </template>
@@ -618,10 +618,28 @@ export default {
             cmd.value = "";
         }
 
+
+
         let catPath = "";
         let handleCatFile = () => {
-            console.log(catPath);
-            console.log(fileInfo);
+            axios.post('/api/sys/writeFile', {
+                'path': catPath,
+                'username': store.state.user.info.username,
+                'group': store.state.user.info.group,
+                'data': fileInfo.value,
+            }).then((response) => {
+                if (response.data.code === 1) {
+                    cmd_context.res.unshift(" ");
+                    cmd_context.res.unshift(response.data.data);
+                }
+                else {
+                    ElNotification({
+                        title: '发生错误',
+                        message: response.data.msg,
+                        type: 'error',
+                    })
+                }
+            }).catch(error => console.log(error));
             catMark.value = false;
         }
         let cat = (path) => {
