@@ -449,4 +449,57 @@ public class FileSystemService {
 
         return R.success("创建成功");
     }
+
+
+    //读取文件
+    public R<String> catFile(FileSystem fileSystem, String path, String group, String filename) {
+        String[] t = path.split("/");
+        DirTree p = fileSystem.getDirTree();
+        for (String s : t) {
+            for (DirTree d : p.getNext()) {
+                if (Objects.equals(d.getInode().getName(), s)) {
+                    p = d;
+                    break;
+                }
+            }
+        }
+
+        Inode inode = new Inode();
+
+        for (DirTree d : p.getNext()) {
+            if (d.getInode().getName().equals(filename)) {
+                inode = d.getInode();
+                break;
+            }
+        }
+
+        if (inode.getId() == -1) {
+            return R.error("改文件不存在");
+        }
+
+        if (inode.getIsDir() == 1) {
+            return R.error(inode.getName() + "为目录");
+        }
+
+        StringBuilder ret = new StringBuilder();
+
+        //读取直接索引
+        for (int i = 0; i < 10; i++) {
+            if (inode.getAddress()[i] == -1) break;
+            ret.append(fileSystem.getBlockInfo().get(inode.getAddress()[i]));
+        }
+
+        //读取间接索引
+        if (inode.getAddress()[10] != -1) {
+            String posBlock = fileSystem.getBlockInfo().get(inode.getAddress()[10]);
+            String[] pos = posBlock.split(",");
+
+            for (String s : pos) {
+                ret.append(fileSystem.getBlockInfo().get(Integer.parseInt(s)));
+            }
+        }
+
+        return R.success(ret.toString());
+    }
+
 }

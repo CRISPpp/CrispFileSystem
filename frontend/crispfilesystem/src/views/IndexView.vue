@@ -48,6 +48,18 @@
                 </span>
             </template>
         </el-dialog>
+
+        <el-dialog v-model="catMark" title="文件内容" width="30%">
+            <el-input v-model="fileInfo" placeholder="请输入文件内容" type="textarea" />
+            <template #footer>
+                <span class="dialog-footer">
+                    <el-button @click="catMark = false">取消</el-button>
+                    <el-button type="primary" @click="handleCatFile">
+                        确认
+                    </el-button>
+                </span>
+            </template>
+        </el-dialog>
     </div>
 </template>
 
@@ -61,6 +73,8 @@ import { ElNotification } from 'element-plus'
 export default {
     name: "IndexView",
     setup() {
+        let fileInfo = ref("");
+        let catMark = ref(false);
         let rdConfirm = ref(false);
         let cmd = ref('');
         let store = useStore();
@@ -200,6 +214,20 @@ export default {
                 }
                 else {
                     newfile(mark[1]);
+                }
+            }
+
+            else if (mark[0] == "cat") {
+                if (mark.length !== 2) {
+                    ElNotification({
+                        title: '指令错误',
+                        message: "请检查指令或者输入help查看指令信息",
+                        type: 'error',
+                    })
+                    cmd.value = "";
+                }
+                else {
+                    cat(mark[1]);
                 }
             }
 
@@ -590,6 +618,53 @@ export default {
             cmd.value = "";
         }
 
+        let catPath = "";
+        let handleCatFile = () => {
+            console.log(catPath);
+            console.log(fileInfo);
+            catMark.value = false;
+        }
+        let cat = (path) => {
+            if (path[0] != '/') {
+                if (store.state.user.info.curPath == "/") {
+                    path = store.state.user.info.curPath + path;
+                } else {
+                    path = store.state.user.info.curPath + '/' + path;
+                }
+            }
+
+            catPath = path;
+
+            axios.post('/api/sys/cat', {
+                'path': path,
+                'username': store.state.user.info.username,
+                'group': store.state.user.info.group,
+            }).then((response) => {
+                if (response.data.code === 1) {
+                    fileInfo.value = response.data.data;
+
+                    cmd_context.context.unshift(" ");
+                    if (store.state.user.info.curPath == '/') {
+                        cmd_context.context.unshift(store.state.user.info.curPath + 'cat' + path);
+                    } else {
+                        cmd_context.context.unshift(store.state.user.info.curPath + '/' + 'cat' + path);
+                    }
+
+
+                    catMark.value = true;
+                }
+                else {
+                    ElNotification({
+                        title: '发生错误',
+                        message: response.data.msg,
+                        type: 'error',
+                    })
+                }
+            }).catch(error => console.log(error));
+
+            cmd.value = "";
+        }
+
         return {
             rdConfirm,
             store,
@@ -598,6 +673,9 @@ export default {
             cmd_context,
             handleCMD,
             handleRd,
+            catMark,
+            fileInfo,
+            handleCatFile,
         }
     }
 
