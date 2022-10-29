@@ -404,7 +404,6 @@ public class FileSystemService {
 
 
     //创建文件
-    //创建目录
     public R<String> newFile(FileSystem fileSystem, String path, String username, String filename) {
         String[] t = path.split("/");
         DirTree p = fileSystem.getDirTree();
@@ -659,5 +658,88 @@ public class FileSystemService {
         inode.setLength(data.length());
 
         return R.success("写入文件成功");
+    }
+
+
+
+    public R<String> delFile(FileSystem fileSystem, String path, String username, String filename) {
+        String[] t = path.split("/");
+        DirTree p = fileSystem.getDirTree();
+        for (String s : t) {
+            for (DirTree d : p.getNext()) {
+                if (Objects.equals(d.getInode().getName(), s)) {
+                    p = d;
+                    break;
+                }
+            }
+        }
+
+        Inode inode = null;
+        DirTree dirTree = null;
+
+        for (DirTree d : p.getNext()) {
+            if (d.getInode().getName().equals(filename)) {
+                dirTree = d;
+                inode = d.getInode();
+                break;
+            }
+        }
+
+        if (inode == null) {
+            return R.error("没有该文件");
+        }
+
+        if (inode.getIsDir() == 1) {
+            return R.error("该文件为目录文件");
+        }
+
+        if (!inode.getCreateBy().equals(username)) {
+            return R.error("无权限删除别的用户内容");
+        }
+
+        dirTree.setParent(null);
+
+        fileSystem.getInodes().remove(inode.getId());
+        fileSystem.getSuperBlock().setInodeNum(fileSystem.getSuperBlock().getInodeNum() - 1);
+        fileSystem.getSuperBlock().getInodeMap().getInodeMap()[inode.getId()] = false;
+
+        //删除直接索引
+        for (int i = 0; i < 10; i++) {
+            if (inode.getAddress()[i] == -1) {
+                break;
+            }
+            fileSystem.getBlockInfo().remove(inode.getAddress()[i]);
+            fileSystem.getSuperBlock().setBlockNum(fileSystem.getSuperBlock().getBlockNum() - 1);
+            fileSystem.getSuperBlock().setBlockFree(fileSystem.getSuperBlock().getBlockFree() + 1);
+            fileSystem.getSuperBlock().setLastBlockSize(fileSystem.getSuperBlock().getLastBlockSize() + BlockSize);
+            fileSystem.getSuperBlock().getBlockMap().getBlockMap()[inode.getAddress()[i]] = false;
+            inode.getAddress()[i] = -1;
+        }
+
+
+        //删除间接索引, 间接索引格式"1,2,3,"
+        if (inode.getAddress()[10] != -1) {
+            String info = fileSystem.getBlockInfo().get(inode.getAddress()[10]);
+
+            fileSystem.getBlockInfo().remove(inode.getAddress()[10]);
+            fileSystem.getSuperBlock().setBlockNum(fileSystem.getSuperBlock().getBlockNum() - 1);
+            fileSystem.getSuperBlock().setBlockFree(fileSystem.getSuperBlock().getBlockFree() + 1);
+            fileSystem.getSuperBlock().setLastBlockSize(fileSystem.getSuperBlock().getLastBlockSize() + BlockSize);
+            fileSystem.getSuperBlock().getBlockMap().getBlockMap()[inode.getAddress()[10]] = false;
+            inode.getAddress()[10] = -1;
+
+            String[] blocks = info.split(",");
+
+            for (String block : blocks) {
+                int curBlock = Integer.parseInt(block);
+                fileSystem.getBlockInfo().remove(curBlock);
+                fileSystem.getSuperBlock().setBlockNum(fileSystem.getSuperBlock().getBlockNum() - 1);
+                fileSystem.getSuperBlock().setBlockFree(fileSystem.getSuperBlock().getBlockFree() + 1);
+                fileSystem.getSuperBlock().setLastBlockSize(fileSystem.getSuperBlock().getLastBlockSize() + BlockSize);
+                fileSystem.getSuperBlock().getBlockMap().getBlockMap()[curBlock] = false;
+            }
+        }
+
+        return R.success("删除成功");
     }
 }

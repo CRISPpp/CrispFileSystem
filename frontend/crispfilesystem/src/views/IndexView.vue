@@ -103,6 +103,10 @@ export default {
                 }
             }
 
+            else if (mark[0] == "EXIT" && mark.length == 1) {
+                logout();
+            }
+
             else if (mark[0] == "info") {
                 if (mark.length > 1) {
                     ElNotification({
@@ -228,6 +232,20 @@ export default {
                 }
                 else {
                     cat(mark[1]);
+                }
+            }
+
+            else if (mark[0] == "del") {
+                if (mark.length !== 2) {
+                    ElNotification({
+                        title: '指令错误',
+                        message: "请检查指令或者输入help查看指令信息",
+                        type: 'error',
+                    })
+                    cmd.value = "";
+                }
+                else {
+                    del(mark[1]);
                 }
             }
 
@@ -670,6 +688,42 @@ export default {
 
 
                     catMark.value = true;
+                }
+                else {
+                    ElNotification({
+                        title: '发生错误',
+                        message: response.data.msg,
+                        type: 'error',
+                    })
+                }
+            }).catch(error => console.log(error));
+
+            cmd.value = "";
+        }
+
+        let del = (path) => {
+            if (path[0] != '/') {
+                if (store.state.user.info.curPath == "/") {
+                    path = store.state.user.info.curPath + path;
+                } else {
+                    path = store.state.user.info.curPath + '/' + path;
+                }
+            }
+
+            axios.post('/api/sys/del', {
+                'path': path,
+                'username': store.state.user.info.username,
+                'group': store.state.user.info.group,
+            }).then((response) => {
+                if (response.data.code === 1) {
+                    cmd_context.res.unshift(" ");
+                    cmd_context.res.unshift(response.data.data);
+                    cmd_context.context.unshift(" ");
+                    if (store.state.user.info.curPath == '/') {
+                        cmd_context.context.unshift(store.state.user.info.curPath + 'del ' + path);
+                    } else {
+                        cmd_context.context.unshift(store.state.user.info.curPath + '/' + 'del ' + path);
+                    }
                 }
                 else {
                     ElNotification({

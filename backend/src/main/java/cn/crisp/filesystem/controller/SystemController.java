@@ -261,4 +261,43 @@ public class SystemController {
 
         return fileSystemService.writeFile(fileSystem, path, writeDto.getGroup(), fileName.toString(), writeDto.getData());
     }
+
+    @ApiOperation("删除文件")
+    @PostMapping("/del")
+    public R<String> delFile(@RequestBody DelDto delDto) {
+        StringBuilder tmpPath = new StringBuilder();
+
+        int idx = delDto.getPath().length() - 1;
+
+        while(idx >= 0 && delDto.getPath().charAt(idx) != '/') {
+            idx--;
+        }
+
+        StringBuilder fileName = new StringBuilder();
+
+        for (int i = idx + 1; i < delDto.getPath().length(); i ++) {
+            fileName.append(delDto.getPath().charAt(i));
+        }
+
+        for (int i = 0; i < idx; i ++) {
+            tmpPath.append(delDto.getPath().charAt(i));
+        }
+        if(tmpPath.isEmpty()) tmpPath.append("/");
+
+        R<String> tmp = fileSystemService.checkDir(new ChangePathDto(tmpPath.toString(), delDto.getUsername(), delDto.getGroup()), fileSystem);
+        if (tmp.getCode() == 0) {
+            return R.error(tmp.getMsg());
+        }
+        String path = tmp.getData();
+
+        R<String> ret = fileSystemService.delFile(fileSystem, path, delDto.getUsername(), fileName.toString());
+        if (ret.getCode() == 0) return ret;
+
+        if (!path.equals("/")) path += "/";
+        path += fileName;
+
+        fileSystem = fileSystemService.removeFromParent(fileSystem, path);
+
+        return ret;
+    }
 }
