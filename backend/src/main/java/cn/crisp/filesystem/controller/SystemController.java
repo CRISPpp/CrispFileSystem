@@ -12,6 +12,7 @@ import cn.crisp.filesystem.vo.UserVo;
 import io.swagger.annotations.Api;
 import io.swagger.annotations.ApiOperation;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.scheduling.annotation.Async;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.*;
@@ -19,7 +20,7 @@ import java.util.*;
 import static cn.crisp.filesystem.common.Constants.CMDDescription;
 import static cn.crisp.filesystem.common.Constants.CMDList;
 
-@Api("CrispFileSystem")
+@Api(tags = "CrispFileSystem")
 @RequestMapping("/sys")
 @RestController
 public class SystemController {
@@ -98,7 +99,6 @@ public class SystemController {
         }
         String path = tmp.getData();
         List<FileVo> ret = fileSystemService.getDir(path, fileSystem);
-
         return R.success(ret);
     }
 
@@ -299,5 +299,69 @@ public class SystemController {
         fileSystem = fileSystemService.removeFromParent(fileSystem, path);
 
         return ret;
+    }
+
+    @ApiOperation("文件系统内部复制")
+    @PostMapping("/copy")
+    public R<String> copyFile(@RequestBody CopyDto copyDto) {
+        //拿到原来的路径
+        StringBuilder tmpFromPath = new StringBuilder();
+
+        int idx = copyDto.getFromPath().length() - 1;
+
+        while(idx >= 0 && copyDto.getFromPath().charAt(idx) != '/') {
+            idx--;
+        }
+
+        StringBuilder fileFromName = new StringBuilder();
+
+        for (int i = idx + 1; i < copyDto.getFromPath().length(); i ++) {
+            fileFromName.append(copyDto.getFromPath().charAt(i));
+        }
+
+        for (int i = 0; i < idx; i ++) {
+            tmpFromPath.append(copyDto.getFromPath().charAt(i));
+        }
+        if(tmpFromPath.isEmpty()) tmpFromPath.append("/");
+
+        R<String> tmp = fileSystemService.checkDir(new ChangePathDto(tmpFromPath.toString(), copyDto.getUsername(), copyDto.getGroup()), fileSystem);
+        if (tmp.getCode() == 0) {
+            return R.error(tmp.getMsg());
+        }
+        String fromPath = tmp.getData();
+
+        //检查目录文件下是否有其他组的文件
+        tmp = fileSystemService.checkFileGroup(fileSystem, fromPath, fileFromName.toString(), copyDto.getGroup());
+        if (tmp.getCode() == 0) {
+            return R.error(tmp.getMsg());
+        }
+
+        //拿到要复制的路径
+        StringBuilder tmpToPath = new StringBuilder();
+
+        idx = copyDto.getToPath().length() - 1;
+
+        while(idx >= 0 && copyDto.getToPath().charAt(idx) != '/') {
+            idx--;
+        }
+
+        StringBuilder fileToName = new StringBuilder();
+
+        for (int i = idx + 1; i < copyDto.getToPath().length(); i ++) {
+            fileToName.append(copyDto.getToPath().charAt(i));
+        }
+
+        for (int i = 0; i < idx; i ++) {
+            tmpToPath.append(copyDto.getToPath().charAt(i));
+        }
+        if (tmpToPath.isEmpty()) tmpToPath.append("/");
+
+        tmp = fileSystemService.checkDir(new ChangePathDto(tmpToPath.toString(), copyDto.getUsername(), copyDto.getGroup()), fileSystem);
+        if (tmp.getCode() == 0) {
+            return R.error(tmp.getMsg());
+        }
+        String toPath = tmp.getData();
+
+        return fileSystemService.copyFileInside(fileSystem, fromPath, toPath, fileFromName.toString(), fileToName.toString(), copyDto.getUsername());
     }
 }

@@ -30,7 +30,7 @@ public class Constants {
     public static final int BlockPos = (TotalBlockNum - BlockNum) * BlockSize; //可用磁盘块的offset
 
 
-    public static final List<String> CMDList = new ArrayList<>(Arrays.asList("info", "cd", "dir", "md", "rd", "newfile", "cat", "copy", "del", "check", "save"));
-    public static final List<String> CMDDescription = new ArrayList<>(Arrays.asList("显示整个系统信息", "改变目录,可使用相对路径和全局路径", "显示目录", "创建目录", "删除目录", "建立文件", "打开文件", "拷贝文件", "删除文件", "检测并恢复文件系统", "保存文件系统"));
+    public static final List<String> CMDList = new ArrayList<>(Arrays.asList("info", "cd", "dir", "md", "rd", "newfile", "cat", "copy", "simdisk copy", "del", "check", "save"));
+    public static final List<String> CMDDescription = new ArrayList<>(Arrays.asList("显示整个系统信息", "改变目录,可使用相对路径和全局路径", "显示当前目录,加上/s显示所有子文件", "创建目录", "删除目录", "建立文件", "打开文件", "在文件系统内部拷贝文件,支持拷贝整个目录", "在文件系统和电脑本地拷贝文件", "删除文件", "检测并恢复文件系统", "保存文件系统"));
 
 }

@@ -249,6 +249,20 @@ export default {
                 }
             }
 
+            else if (mark[0] == "copy") {
+                if (mark.length !== 3) {
+                    ElNotification({
+                        title: '指令错误',
+                        message: "请检查指令或者输入help查看指令信息",
+                        type: 'error',
+                    })
+                    cmd.value = "";
+                }
+                else {
+                    copyFile(mark[1], mark[2]);
+                }
+            }
+
             else {
                 ElNotification({
                     title: '指令错误',
@@ -362,6 +376,12 @@ export default {
                 if (file.address[10] === -1) {
                     cmd_context.res.unshift("文件内容在磁盘区无间接索引");
                 } else {
+                    let pos = '';
+                    for (let j = 0; j < file.indirect.length; j++) {
+                        pos += file.indirect[j];
+                        if (j != file.indirect.length - 1) pos += ",";
+                    }
+                    cmd_context.res.unshift("文件内容在磁盘区的间接索引具体块号为: " + pos);
                     cmd_context.res.unshift("文件内容在磁盘区的间接索引块号为: " + file.address[10]);
                 }
                 cmd_context.res.unshift("文件内容在磁盘区的直接索引块号为: " + pos);
@@ -734,6 +754,48 @@ export default {
                 }
             }).catch(error => console.log(error));
 
+            cmd.value = "";
+        }
+
+        let copyFile = (path, toPath) => {
+            if (path[0] != '/') {
+                if (store.state.user.info.curPath == "/") {
+                    path = store.state.user.info.curPath + path;
+                } else {
+                    path = store.state.user.info.curPath + '/' + path;
+                }
+            }
+            if (toPath[0] != '/') {
+                if (store.state.user.info.curPath == "/") {
+                    toPath = store.state.user.info.curPath + toPath;
+                } else {
+                    toPath = store.state.user.info.curPath + '/' + toPath;
+                }
+            }
+            axios.post('/api/sys/copy', {
+                'fromPath': path,
+                'toPath': toPath,
+                'username': store.state.user.info.username,
+                'group': store.state.user.info.group,
+            }).then((response) => {
+                if (response.data.code === 1) {
+                    cmd_context.res.unshift(" ");
+                    cmd_context.res.unshift(response.data.data);
+                    cmd_context.context.unshift(" ");
+                    if (store.state.user.info.curPath == '/') {
+                        cmd_context.context.unshift(store.state.user.info.curPath + 'copy ' + path + " " + toPath);
+                    } else {
+                        cmd_context.context.unshift(store.state.user.info.curPath + '/' + 'copy ' + path + " " + toPath);
+                    }
+                }
+                else {
+                    ElNotification({
+                        title: '发生错误',
+                        message: response.data.msg,
+                        type: 'error',
+                    })
+                }
+            }).catch(error => console.log(error));
             cmd.value = "";
         }
 

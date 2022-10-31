@@ -198,9 +198,17 @@ public class FileSystemService {
         }
 
         for (DirTree d : p.getNext()) {
+            List<Integer> indirect = new ArrayList<>();
+            if (d.getInode().getAddress()[10] != -1) {
+                String[] pos = fileSystem.getBlockInfo().get(d.getInode().getAddress()[10]).split(",");
+                for (String s : pos) {
+                    indirect.add(Integer.parseInt(s));
+                }
+            }
             ret.add(new FileVo(d.getInode().getName(),
                     d.getInode().getId(),
                     d.getInode().getAddress(),
+                    indirect,
                     d.getInode().getLimit(),
                     d.getInode().getLength(),
                     d.getInode().getCreateBy(),
@@ -232,9 +240,17 @@ public class FileSystemService {
             deque.removeFirst();
             for (DirTree d : pp.getNext()) {
                 if (d.getInode().getIsDir() == 1) deque.addLast(d);
+                List<Integer> indirect = new ArrayList<>();
+                if (d.getInode().getAddress()[10] != -1) {
+                    String[] pos = fileSystem.getBlockInfo().get(d.getInode().getAddress()[10]).split(",");
+                    for (String s : pos) {
+                        indirect.add(Integer.parseInt(s));
+                    }
+                }
                 ret.add(new FileVo(d.getInode().getName(),
                         d.getInode().getId(),
                         d.getInode().getAddress(),
+                        indirect,
                         d.getInode().getLimit(),
                         d.getInode().getLength(),
                         d.getInode().getCreateBy(),
@@ -741,5 +757,209 @@ public class FileSystemService {
         }
 
         return R.success("删除成功");
+    }
+
+
+    //检测复制目录下有无非同组的文件
+    public R<String> checkFileGroup(FileSystem fileSystem, String path, String fileName, String group) {
+        if (!path.equals("/")) {
+            path += "/";
+        }
+        path += fileName;
+
+        String[] t = path.split("/");
+        DirTree p = fileSystem.getDirTree();
+        for (String s : t) {
+            for (DirTree d : p.getNext()) {
+                if (Objects.equals(d.getInode().getName(), s)) {
+                    p = d;
+                    break;
+                }
+            }
+        }
+
+        if ("root".equals(group)) {
+            return R.success("root组拥有所有权限");
+        }
+
+        Deque<DirTree> deque = new ArrayDeque<>();
+        deque.addLast(p);
+
+        while (deque.size() > 0) {
+            DirTree d = deque.getFirst();
+            deque.removeFirst();
+
+            String fG = "";
+
+            for (User user : fileSystem.getBootBlock().getUserList()) {
+                if (user.getUsername().equals(d.getInode().getCreateBy())) {
+                    fG = user.getGroup();
+                    break;
+                }
+            }
+
+            if (!fG.equals(group)) {
+                return R.error("没有权限进入 " + d.getInode().getName());
+            }
+
+            for (DirTree son : d.getNext()) {
+                deque.addLast(son);
+            }
+        }
+
+        return R.success("拥有该文件r权限");
+    }
+
+
+    //文件系统内部复制
+    public R<String> copyFileInside(FileSystem fileSystem, String fromPath, String toPath, String fileFromName, String fileToName, String username) {
+        //获取源文件目录树位置
+        if (!fromPath.equals("/")) {
+            fromPath += "/";
+        }
+        fromPath += fileFromName;
+
+        String[] ft = fromPath.split("/");
+        DirTree from = fileSystem.getDirTree();
+        for (String s : ft) {
+            for (DirTree d : from.getNext()) {
+                if (Objects.equals(d.getInode().getName(), s)) {
+                    from = d;
+                    break;
+                }
+            }
+        }
+
+        //获取目标文件目录树位置
+        String[] t = toPath.split("/");
+        DirTree to = fileSystem.getDirTree();
+        for (String s : t) {
+            for (DirTree d : to.getNext()) {
+                if (Objects.equals(d.getInode().getName(), s)) {
+                    to = d;
+                    break;
+                }
+            }
+        }
+        //检查是否存在
+        for (DirTree d : to.getNext()) {
+            if (d.getInode().getName().equals(fileToName)) {
+                return R.error("文件: " + fileToName + " 已存在");
+            }
+        }
+
+        DirTree newNode = copyDFS(fileSystem, from, fileToName, username);
+
+        newNode.setParent(to);
+
+        to.getNext().add(newNode);
+
+        return R.success("复制成功");
+    }
+
+    //内部复制，采用dfs递归
+    public DirTree copyDFS(FileSystem fileSystem, DirTree from, String filename, String username) {
+        if (from == null) return null;
+
+        Inode fromNode = from.getInode();
+
+        DirTree ret = new DirTree();
+
+        Inode inode = new Inode();
+        //检测哪块空闲
+        for (int i = 0; i < InodeNum; i++) {
+            if (!fileSystem.getSuperBlock().getInodeMap().getInodeMap()[i]) {
+                fileSystem.getSuperBlock().getInodeMap().getInodeMap()[i] = true;
+                inode.setId(i);
+                break;
+            }
+        }
+        if (inode.getId() == -1) return null;
+
+        //复制基本信息
+        fileSystem.getSuperBlock().setInodeNum(fileSystem.getSuperBlock().getInodeNum() + 1);
+        inode.setName(filename);
+        inode.setCreateBy(username);
+        inode.setIsDir(fromNode.getIsDir());
+        inode.setLength(fromNode.getLength());
+
+        //复制磁盘块信息
+        //直接索引
+        for (int i = 0; i < 10; i ++) {
+            if (fromNode.getAddress()[i] == -1) {
+                break;
+            }
+            int newBlockIdx = -1;
+            for (int j = 0; j < fileSystem.getSuperBlock().getBlockMap().getBlockMap().length; j ++) {
+                if (!fileSystem.getSuperBlock().getBlockMap().getBlockMap()[j]) {
+                    fileSystem.getSuperBlock().getBlockMap().getBlockMap()[j] = true;
+                    newBlockIdx = j;
+                    break;
+                }
+            }
+
+            if (newBlockIdx == -1) return null;
+
+            inode.getAddress()[i] = newBlockIdx;
+
+            fileSystem.getSuperBlock().setBlockNum(fileSystem.getSuperBlock().getBlockNum() + 1);
+            fileSystem.getSuperBlock().setBlockFree(fileSystem.getSuperBlock().getBlockFree() - 1);
+            fileSystem.getSuperBlock().setLastBlockSize(fileSystem.getSuperBlock().getLastBlockSize() - BlockSize);
+
+            fileSystem.getBlockInfo().put(newBlockIdx, fileSystem.getBlockInfo().get(fromNode.getAddress()[i]));
+        }
+
+        //间接索引
+        if (fromNode.getAddress()[10] != -1) {
+            String info = fileSystem.getBlockInfo().get(fromNode.getAddress()[10]);
+            String[] pos = info.split(",");
+
+            //先分配间接索引结点
+            int newBlockIdx = -1;
+            for (int j = 0; j < fileSystem.getSuperBlock().getBlockMap().getBlockMap().length; j ++) {
+                if (!fileSystem.getSuperBlock().getBlockMap().getBlockMap()[j]) {
+                    fileSystem.getSuperBlock().getBlockMap().getBlockMap()[j] = true;
+                    newBlockIdx = j;
+                    break;
+                }
+            }
+
+            inode.getAddress()[10] = newBlockIdx;
+            fileSystem.getBlockInfo().put(inode.getAddress()[10], "");
+            fileSystem.getSuperBlock().setBlockNum(fileSystem.getSuperBlock().getBlockNum() + 1);
+            fileSystem.getSuperBlock().setBlockFree(fileSystem.getSuperBlock().getBlockFree() - 1);
+            fileSystem.getSuperBlock().setLastBlockSize(fileSystem.getSuperBlock().getLastBlockSize() - BlockSize);
+
+            //再分配间接索引的具体磁盘块信息
+            for (String p : pos) {
+                int newDataIdx = -1;
+                for (int j = 0; j < fileSystem.getSuperBlock().getBlockMap().getBlockMap().length; j ++) {
+                    if (!fileSystem.getSuperBlock().getBlockMap().getBlockMap()[j]) {
+                        fileSystem.getSuperBlock().getBlockMap().getBlockMap()[j] = true;
+                        newDataIdx = j;
+                        break;
+                    }
+                }
+
+                fileSystem.getBlockInfo().put(inode.getAddress()[10], fileSystem.getBlockInfo().get(inode.getAddress()[10]) + String.valueOf(newDataIdx) + ",");
+                fileSystem.getBlockInfo().put(newDataIdx, fileSystem.getBlockInfo().get(Integer.parseInt(p)));
+                fileSystem.getSuperBlock().setBlockNum(fileSystem.getSuperBlock().getBlockNum() + 1);
+                fileSystem.getSuperBlock().setBlockFree(fileSystem.getSuperBlock().getBlockFree() - 1);
+                fileSystem.getSuperBlock().setLastBlockSize(fileSystem.getSuperBlock().getLastBlockSize() - BlockSize);
+            }
+        }
+
+        fileSystem.getInodes().put(inode.getId(), inode);
+
+        ret.setInode(inode);
+
+        //递归设置i结点
+        for (DirTree son : from.getNext()) {
+            DirTree newSon = copyDFS(fileSystem, son, son.getInode().getName(), username);
+            newSon.setParent(ret);
+            ret.getNext().add(newSon);
+        }
+
+        return ret;
     }
 }

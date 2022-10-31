@@ -6,6 +6,7 @@ import lombok.NoArgsConstructor;
 
 import java.io.Serializable;
 import java.time.LocalDateTime;
+import java.util.List;
 
 @Data
 @AllArgsConstructor
@@ -15,6 +16,7 @@ public class FileVo implements Serializable {
     private String filename;
     private int id;
     private int[] address;
+    private List<Integer> indirect;
     private String limit;
     private int length;
     private String createBy;
