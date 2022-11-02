@@ -11,15 +11,20 @@ import cn.crisp.filesystem.vo.HelpVo;
 import cn.crisp.filesystem.vo.UserVo;
 import io.swagger.annotations.Api;
 import io.swagger.annotations.ApiOperation;
+import lombok.SneakyThrows;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.web.bind.annotation.*;
 
+import java.io.File;
+import java.nio.file.Files;
+import java.nio.file.Paths;
 import java.util.*;
 
-import static cn.crisp.filesystem.common.Constants.CMDDescription;
-import static cn.crisp.filesystem.common.Constants.CMDList;
+import static cn.crisp.filesystem.common.Constants.*;
 
+@Slf4j
 @Api(tags = "CrispFileSystem")
 @RequestMapping("/sys")
 @RestController
@@ -234,6 +239,7 @@ public class SystemController {
     @ApiOperation("写入文件")
     @PostMapping("/writeFile")
     public R<String> writeFile(@RequestBody WriteDto writeDto) {
+        if (writeDto.getData().length() > FileLimitSize) return R.error("文件大小超过限制");
         StringBuilder tmpPath = new StringBuilder();
 
         int idx = writeDto.getPath().length() - 1;
@@ -364,4 +370,124 @@ public class SystemController {
 
         return fileSystemService.copyFileInside(fileSystem, fromPath, toPath, fileFromName.toString(), fileToName.toString(), copyDto.getUsername());
     }
+
+    @SneakyThrows
+    @ApiOperation("host文件系统与本地文件系统复制")
+    @PostMapping("/simdisk")
+    public R<String> simdiskCopy(@RequestBody CopyDto copyDto) {
+        //拿到原来的路径
+        String fromPath = "";
+        String fromHost = "";
+        StringBuilder fileFromName = new StringBuilder();
+        if (copyDto.getFromPath().charAt(0) == '/') {
+            StringBuilder tmpFromPath = new StringBuilder();
+
+            int idx = copyDto.getFromPath().length() - 1;
+
+            while (idx >= 0 && copyDto.getFromPath().charAt(idx) != '/') {
+                idx--;
+            }
+
+
+            for (int i = idx + 1; i < copyDto.getFromPath().length(); i++) {
+                fileFromName.append(copyDto.getFromPath().charAt(i));
+            }
+
+            for (int i = 0; i < idx; i++) {
+                tmpFromPath.append(copyDto.getFromPath().charAt(i));
+            }
+            if (tmpFromPath.isEmpty()) tmpFromPath.append("/");
+
+            R<String> tmp = fileSystemService.checkDir(new ChangePathDto(tmpFromPath.toString(), copyDto.getUsername(), copyDto.getGroup()), fileSystem);
+            if (tmp.getCode() == 0) {
+                return R.error(tmp.getMsg());
+            }
+            fromPath = tmp.getData();
+
+            //检查目录文件下是否有其他组的文件
+            tmp = fileSystemService.checkFileGroup(fileSystem, fromPath, fileFromName.toString(), copyDto.getGroup());
+            if (tmp.getCode() == 0) {
+                return R.error(tmp.getMsg());
+            }
+
+
+        }else {
+            if (copyDto.getFromPath().charAt(0) != '<') return R.error("路径错误，无host");
+            int idx = 1;
+            for (; idx < copyDto.getFromPath().length() && copyDto.getFromPath().charAt(idx) != '>'; idx++) {
+                fromHost += copyDto.getFromPath().charAt(idx);
+            }
+            if (idx == copyDto.getFromPath().length()) return R.error("路径错误");
+            for (idx = idx + 1; idx < copyDto.getFromPath().length(); idx ++) {
+                fromPath += copyDto.getFromPath().charAt(idx);
+                if (copyDto.getFromPath().charAt(idx) == '\\') fromPath += '\\';
+            }
+            fromPath = HostPath + fromHost + "\\" + fromPath;
+
+            idx = copyDto.getFromPath().length() - 1;
+            while (idx >= 0 && copyDto.getFromPath().charAt(idx) != '\\') idx--;
+            if (idx == -1) return R.error("路径错误");
+            for (idx = idx + 1; idx < copyDto.getFromPath().length(); idx ++) {
+                fileFromName.append(copyDto.getFromPath().charAt(idx));
+            }
+        }
+
+
+        String toPath = "";
+        String toHost = "";
+        StringBuilder fileToName = new StringBuilder();
+
+        if (copyDto.getToPath().charAt(0) == '/') {
+            //拿到要复制的路径
+            StringBuilder tmpToPath = new StringBuilder();
+
+            int idx = copyDto.getToPath().length() - 1;
+
+            while (idx >= 0 && copyDto.getToPath().charAt(idx) != '/') {
+                idx--;
+            }
+
+
+            for (int i = idx + 1; i < copyDto.getToPath().length(); i++) {
+                fileToName.append(copyDto.getToPath().charAt(i));
+            }
+
+            for (int i = 0; i < idx; i++) {
+                tmpToPath.append(copyDto.getToPath().charAt(i));
+            }
+            if (tmpToPath.isEmpty()) tmpToPath.append("/");
+
+            R<String> tmp = fileSystemService.checkDir(new ChangePathDto(tmpToPath.toString(), copyDto.getUsername(), copyDto.getGroup()), fileSystem);
+            if (tmp.getCode() == 0) {
+                return R.error(tmp.getMsg());
+            }
+            toPath = tmp.getData();
+        }
+        else {
+            if (copyDto.getToPath().charAt(0) != '<') return R.error("路径错误，无host");
+            int idx = 1;
+            for (; idx < copyDto.getToPath().length() && copyDto.getToPath().charAt(idx) != '>'; idx++) {
+                toHost += copyDto.getToPath().charAt(idx);
+            }
+            if (idx == copyDto.getToPath().length()) return R.error("路径错误");
+            for (idx = idx + 1; idx < copyDto.getToPath().length(); idx ++) {
+                toPath += copyDto.getToPath().charAt(idx);
+                if (copyDto.getToPath().charAt(idx) == '\\') toPath += '\\';
+            }
+            toPath = HostPath + toHost + "\\" + toPath;
+
+            idx = copyDto.getToPath().length() - 1;
+            while (idx >= 0 && copyDto.getToPath().charAt(idx) != '\\') idx--;
+            if (idx == -1) return R.error("路径错误");
+            for (idx = idx + 1; idx < copyDto.getToPath().length(); idx ++) {
+                fileToName.append(copyDto.getToPath().charAt(idx));
+            }
+        }
+
+        if (fromHost.equals("") && toHost.equals("")) {
+            return fileSystemService.copyFileInside(fileSystem, fromPath, toPath, fileFromName.toString(), fileToName.toString(), copyDto.getUsername());
+        }
+        return fileSystemService.simdiskCopy(fileSystem, fromPath, toPath,fileFromName.toString(), fileToName.toString(), copyDto.getUsername());
+    }
+
 }

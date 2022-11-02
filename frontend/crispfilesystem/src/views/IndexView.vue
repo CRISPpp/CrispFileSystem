@@ -263,6 +263,20 @@ export default {
                 }
             }
 
+            else if (mark[0] == "simdisk") {
+                if (mark.length !== 4) {
+                    ElNotification({
+                        title: '指令错误',
+                        message: "请检查指令或者输入help查看指令信息",
+                        type: 'error',
+                    })
+                    cmd.value = "";
+                }
+                else {
+                    simdiskCopy(mark[2], mark[3]);
+                }
+            }
+
             else {
                 ElNotification({
                     title: '指令错误',
@@ -786,6 +800,53 @@ export default {
                         cmd_context.context.unshift(store.state.user.info.curPath + 'copy ' + path + " " + toPath);
                     } else {
                         cmd_context.context.unshift(store.state.user.info.curPath + '/' + 'copy ' + path + " " + toPath);
+                    }
+                }
+                else {
+                    ElNotification({
+                        title: '发生错误',
+                        message: response.data.msg,
+                        type: 'error',
+                    })
+                }
+            }).catch(error => console.log(error));
+            cmd.value = "";
+        }
+
+
+        let simdiskCopy = (path, toPath) => {
+            if (path[0] != '<') {
+                if (path[0] != '/') {
+                    if (store.state.user.info.curPath == "/") {
+                        path = store.state.user.info.curPath + path;
+                    } else {
+                        path = store.state.user.info.curPath + '/' + path;
+                    }
+                }
+            }
+            if (toPath[0] != '<') {
+                if (toPath[0] != '/') {
+                    if (store.state.user.info.curPath == "/") {
+                        toPath = store.state.user.info.curPath + toPath;
+                    } else {
+                        toPath = store.state.user.info.curPath + '/' + toPath;
+                    }
+                }
+            }
+            axios.post('/api/sys/simdisk', {
+                'fromPath': path,
+                'toPath': toPath,
+                'username': store.state.user.info.username,
+                'group': store.state.user.info.group,
+            }).then((response) => {
+                if (response.data.code === 1) {
+                    cmd_context.res.unshift(" ");
+                    cmd_context.res.unshift(response.data.data);
+                    cmd_context.context.unshift(" ");
+                    if (store.state.user.info.curPath == '/') {
+                        cmd_context.context.unshift(store.state.user.info.curPath + 'simdisk copy ' + path + " " + toPath);
+                    } else {
+                        cmd_context.context.unshift(store.state.user.info.curPath + '/' + 'simdisk copy ' + path + " " + toPath);
                     }
                 }
                 else {

@@ -12,6 +12,8 @@ import org.apache.commons.lang3.StringUtils;
 import org.springframework.stereotype.Service;
 
 import java.io.*;
+import java.nio.file.Files;
+import java.nio.file.Paths;
 import java.util.*;
 
 import static cn.crisp.filesystem.common.Constants.*;
@@ -813,6 +815,8 @@ public class FileSystemService {
 
     //文件系统内部复制
     public R<String> copyFileInside(FileSystem fileSystem, String fromPath, String toPath, String fileFromName, String fileToName, String username) {
+        if (fileToName.length() == 0) fileToName = fileFromName;
+
         //获取源文件目录树位置
         if (!fromPath.equals("/")) {
             fromPath += "/";
@@ -961,5 +965,205 @@ public class FileSystemService {
         }
 
         return ret;
+    }
+
+
+    //文件系统之间复制
+    public R<String> simdiskCopy(FileSystem fileSystem, String fromPath,  String toPath, String fileFromName, String fileToName, String username) {
+        if (fileToName.length() == 0) fileToName = fileFromName;
+        String data = "";
+        if (fromPath.charAt(0) != '/'){
+            File file = new File(fromPath);
+            if (!file.exists()) {
+                return R.error("文件不存在");
+            }
+            try {
+                data = Files.readString(Paths.get(fromPath));
+            }
+            catch (Exception e) {
+                e.printStackTrace();
+                return R.error("请检查文件路径");
+            }
+        }
+        else {
+            //获取源文件目录树位置
+            if (!fromPath.equals("/")) {
+                fromPath += "/";
+            }
+            fromPath += fileFromName;
+
+            String[] ft = fromPath.split("/");
+            DirTree from = fileSystem.getDirTree();
+            for (String s : ft) {
+                for (DirTree d : from.getNext()) {
+                    if (Objects.equals(d.getInode().getName(), s)) {
+                        from = d;
+                        break;
+                    }
+                }
+            }
+
+            //检查是否为文件
+            if (from.getInode().getIsDir() == 1) {
+                return R.error("系统间不支持目录拷贝");
+            }
+
+            //读取文件内容
+            //直接索引
+            for (int i = 0; i < 10; i ++) {
+                if (from.getInode().getAddress()[i] == -1) {
+                    break;
+                }
+                data += fileSystem.getBlockInfo().get(from.getInode().getAddress()[i]);
+            }
+
+            //间接索引
+            if (from.getInode().getAddress()[10] != -1) {
+                String info = fileSystem.getBlockInfo().get(from.getInode().getAddress()[10]);
+                String[] blocks = info.split(",");
+                for (String s : blocks) {
+                    data += fileSystem.getBlockInfo().get(Integer.parseInt(s));
+                }
+            }
+        }
+
+        if (toPath.charAt(0) != '/') {
+            File file = new File(toPath);
+            try {
+                if (!file.exists()) file.createNewFile();
+
+                FileOutputStream f = new FileOutputStream(file);
+                ObjectOutputStream o = new ObjectOutputStream(f);
+                o.writeChars(data);
+                o.close();
+                f.close();
+
+            } catch (Exception e) {
+                e.printStackTrace();
+                return R.error("创建文件失败");
+            }
+
+        }
+        else {
+            //获取目标文件目录树位置
+            String[] t = toPath.split("/");
+            DirTree to = fileSystem.getDirTree();
+            for (String s : t) {
+                for (DirTree d : to.getNext()) {
+                    if (Objects.equals(d.getInode().getName(), s)) {
+                        to = d;
+                        break;
+                    }
+                }
+            }
+            //检查是否存在
+            for (DirTree d : to.getNext()) {
+                if (d.getInode().getName().equals(fileToName)) {
+                    return R.error("文件: " + fileToName + " 已存在");
+                }
+            }
+
+            DirTree newNode = new DirTree();
+
+            Inode inode = new Inode();
+            //检测哪块空闲
+            for (int i = 0; i < InodeNum; i++) {
+                if (!fileSystem.getSuperBlock().getInodeMap().getInodeMap()[i]) {
+                    fileSystem.getSuperBlock().getInodeMap().getInodeMap()[i] = true;
+                    inode.setId(i);
+                    break;
+                }
+            }
+            if (inode.getId() == -1) return R.error("inode区已满");
+            inode.setIsDir(0);
+            inode.setName(fileToName);
+            inode.setCreateBy(username);
+            inode.setLength(data.length());
+
+
+
+            fileSystem.getInodes().put(inode.getId(), inode);
+            fileSystem.getSuperBlock().setInodeNum(fileSystem.getSuperBlock().getInodeNum() + 1);
+
+            //写入文件
+            int fileIdx = 0;
+            int addressIdx = 0;
+
+            while (fileIdx < data.length()) {
+                int right = Math.min(data.length(), fileIdx + BlockSize);
+                int newBlockIdx = -1;
+
+                for (int i = 0; i < fileSystem.getSuperBlock().getBlockMap().getBlockMap().length; i ++) {
+                    if (!fileSystem.getSuperBlock().getBlockMap().getBlockMap()[i]) {
+                        fileSystem.getSuperBlock().getBlockMap().getBlockMap()[i] = true;
+                        newBlockIdx = i;
+                        break;
+                    }
+                }
+
+                if (newBlockIdx == -1) return R.error("磁盘空间不够，部分内容写入失败");
+
+                //直接索引
+                if (addressIdx < 10) {
+                    inode.getAddress()[addressIdx] = newBlockIdx;
+
+                    fileSystem.getBlockInfo().put(newBlockIdx, data.substring(fileIdx, right));
+                    fileSystem.getSuperBlock().setBlockNum(fileSystem.getSuperBlock().getBlockNum() + 1);
+                    fileSystem.getSuperBlock().setBlockFree(fileSystem.getSuperBlock().getBlockFree() - 1);
+                    fileSystem.getSuperBlock().setLastBlockSize(fileSystem.getSuperBlock().getLastBlockSize() - BlockSize);
+
+                    addressIdx++;
+
+                }
+                else {
+                    //间接索引
+                    //没有分配则直接分配间接索引结点
+                    if (inode.getAddress()[10] == -1) {
+                        int newDataBlock = -1;
+
+                        for (int i = 0; i < fileSystem.getSuperBlock().getBlockMap().getBlockMap().length; i ++) {
+                            if (!fileSystem.getSuperBlock().getBlockMap().getBlockMap()[i]) {
+                                fileSystem.getSuperBlock().getBlockMap().getBlockMap()[i] = true;
+                                newDataBlock = i;
+                                break;
+                            }
+                        }
+
+                        if (newDataBlock == -1) return R.error("磁盘空间不够，部分内容写入失败");
+
+                        //先分配间接索引结点
+                        inode.getAddress()[addressIdx] = newBlockIdx;
+                        fileSystem.getBlockInfo().put(newBlockIdx, String.valueOf(newDataBlock) + ",");
+                        fileSystem.getSuperBlock().setBlockNum(fileSystem.getSuperBlock().getBlockNum() + 1);
+                        fileSystem.getSuperBlock().setBlockFree(fileSystem.getSuperBlock().getBlockFree() - 1);
+                        fileSystem.getSuperBlock().setLastBlockSize(fileSystem.getSuperBlock().getLastBlockSize() - BlockSize);
+
+                        //再分配数据结点
+                        fileSystem.getBlockInfo().put(newDataBlock, data.substring(fileIdx, right));
+                        fileSystem.getSuperBlock().setBlockNum(fileSystem.getSuperBlock().getBlockNum() + 1);
+                        fileSystem.getSuperBlock().setBlockFree(fileSystem.getSuperBlock().getBlockFree() - 1);
+                        fileSystem.getSuperBlock().setLastBlockSize(fileSystem.getSuperBlock().getLastBlockSize() - BlockSize);
+                    }
+                    else {
+                        //否则先修改原来的间接结点，再写入磁盘块
+                        fileSystem.getBlockInfo().put(inode.getAddress()[10], fileSystem.getBlockInfo().get(inode.getAddress()[10]) + String.valueOf(newBlockIdx) + ",");
+                        fileSystem.getBlockInfo().put(newBlockIdx, data.substring(fileIdx, right));
+                        fileSystem.getSuperBlock().setBlockNum(fileSystem.getSuperBlock().getBlockNum() + 1);
+                        fileSystem.getSuperBlock().setBlockFree(fileSystem.getSuperBlock().getBlockFree() - 1);
+                        fileSystem.getSuperBlock().setLastBlockSize(fileSystem.getSuperBlock().getLastBlockSize() - BlockSize);
+                    }
+                }
+
+                fileIdx = right;
+            }
+
+            newNode.setInode(inode);
+
+            newNode.setParent(to);
+
+            to.getNext().add(newNode);
+        }
+
+        return R.success("复制成功");
     }
 }
