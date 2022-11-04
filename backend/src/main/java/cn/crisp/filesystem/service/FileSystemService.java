@@ -1,20 +1,27 @@
 package cn.crisp.filesystem.service;
 
+import cn.crisp.filesystem.common.CODE;
 import cn.crisp.filesystem.common.R;
 import cn.crisp.filesystem.dto.ChangePathDto;
 import cn.crisp.filesystem.entity.DirTree;
 import cn.crisp.filesystem.entity.Inode;
 import cn.crisp.filesystem.entity.User;
+import cn.crisp.filesystem.exception.SystemLockException;
 import cn.crisp.filesystem.system.FileSystem;
+import cn.crisp.filesystem.utils.RedisCache;
 import cn.crisp.filesystem.vo.FileVo;
+import lombok.SneakyThrows;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import java.io.*;
 import java.nio.file.Files;
 import java.nio.file.Paths;
 import java.util.*;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.locks.ReentrantLock;
 
 import static cn.crisp.filesystem.common.Constants.*;
 
@@ -23,6 +30,10 @@ import static cn.crisp.filesystem.common.Constants.*;
 public class FileSystemService {
     //模拟硬盘
     File file = new File(DISK);
+
+    //缓存
+    @Autowired
+    RedisCache redisCache;
 
     private FileSystem readFileSystem(FileSystem fileSystem) throws Exception {
         if (!file.exists()) {
@@ -54,21 +65,40 @@ public class FileSystemService {
         f.close();
     }
 
+    //jvm锁，系统信息读写并发控制
+    private final ReentrantLock disk_lock = new ReentrantLock();
+
+    @SneakyThrows
     public FileSystem check(FileSystem fileSystem) {
-        try {
-            //writeFileSystem(fileSystem);
-            fileSystem = readFileSystem(fileSystem);
-        }catch (Exception e){
-            e.printStackTrace();
+        if (!disk_lock.tryLock(2, TimeUnit.SECONDS)) {
+            throw new SystemLockException(CODE.SystemLockError, "别的用户正在读写系统，请稍后再试");
+        }else {
+            try {
+                Thread.sleep(3000);
+                fileSystem = readFileSystem(fileSystem);
+            } catch (Exception e) {
+                e.printStackTrace();
+            } finally {
+                disk_lock.unlock();
+            }
         }
         return fileSystem;
     }
 
+    @SneakyThrows
     public void save(FileSystem fileSystem) {
-        try {
-            writeFileSystem(fileSystem);
-        }catch (Exception e){
-            e.printStackTrace();
+        if (!disk_lock.tryLock(2, TimeUnit.SECONDS)) {
+            throw new SystemLockException(CODE.SystemLockError, "别的用户正在读写系统，请稍后再试");
+        }
+        else {
+            try {
+                Thread.sleep(3000);
+                writeFileSystem(fileSystem);
+            } catch (Exception e) {
+                e.printStackTrace();
+            }finally {
+                disk_lock.unlock();
+            }
         }
     }
 
@@ -187,61 +217,28 @@ public class FileSystemService {
 
     //获取当前目录的所有文件
     public List<FileVo> getDir(String path, FileSystem fileSystem) {
+        //获取锁
+        while (!redisCache.setnx(path, "getDir", 60L, TimeUnit.SECONDS)) {
+            try {
+                Thread.sleep(100);
+            } catch (Exception e) {
+                e.printStackTrace();
+            }
+        }
         List<FileVo> ret = new ArrayList<>();
-        String[] t = path.split("/");
-        DirTree p = fileSystem.getDirTree();
-        for (String s : t) {
+        try {
+            String[] t = path.split("/");
+            DirTree p = fileSystem.getDirTree();
+            for (String s : t) {
+                for (DirTree d : p.getNext()) {
+                    if (Objects.equals(d.getInode().getName(), s)) {
+                        p = d;
+                        break;
+                    }
+                }
+            }
+
             for (DirTree d : p.getNext()) {
-                if (Objects.equals(d.getInode().getName(), s)) {
-                    p = d;
-                    break;
-                }
-            }
-        }
-
-        for (DirTree d : p.getNext()) {
-            List<Integer> indirect = new ArrayList<>();
-            if (d.getInode().getAddress()[10] != -1) {
-                String[] pos = fileSystem.getBlockInfo().get(d.getInode().getAddress()[10]).split(",");
-                for (String s : pos) {
-                    indirect.add(Integer.parseInt(s));
-                }
-            }
-            ret.add(new FileVo(d.getInode().getName(),
-                    d.getInode().getId(),
-                    d.getInode().getAddress(),
-                    indirect,
-                    d.getInode().getLimit(),
-                    d.getInode().getLength(),
-                    d.getInode().getCreateBy(),
-                    d.getInode().getCreateTime(),
-                    d.getInode().getIsDir()));
-        }
-
-        return ret;
-    }
-
-    //获取目录下所有文件，包括子文件，算法：bfs
-    public List<FileVo> getDirs(String path, FileSystem fileSystem) {
-        List<FileVo> ret = new ArrayList<>();
-        String[] t = path.split("/");
-        DirTree p = fileSystem.getDirTree();
-        for (String s : t) {
-            for (DirTree d : p.getNext()) {
-                if (Objects.equals(d.getInode().getName(), s)) {
-                    p = d;
-                    break;
-                }
-            }
-        }
-
-        Deque<DirTree> deque = new ArrayDeque<>();
-        deque.addLast(p);
-        while(deque.size() > 0) {
-            DirTree pp = deque.getFirst();
-            deque.removeFirst();
-            for (DirTree d : pp.getNext()) {
-                if (d.getInode().getIsDir() == 1) deque.addLast(d);
                 List<Integer> indirect = new ArrayList<>();
                 if (d.getInode().getAddress()[10] != -1) {
                     String[] pos = fileSystem.getBlockInfo().get(d.getInode().getAddress()[10]).split(",");
@@ -259,52 +256,132 @@ public class FileSystemService {
                         d.getInode().getCreateTime(),
                         d.getInode().getIsDir()));
             }
+        }catch (Exception e) {
+            e.printStackTrace();
+        } finally {
+            if (redisCache.getCacheObject(path).equals("getDir")) redisCache.deleteObject(path);
+        }
+
+        return ret;
+    }
+
+    //获取目录下所有文件，包括子文件，算法：bfs
+    public List<FileVo> getDirs(String path, FileSystem fileSystem) {
+        //获取锁
+        while (!redisCache.setnx(path, "getDirs", 60L, TimeUnit.SECONDS)) {
+            try {
+                Thread.sleep(100);
+            } catch (Exception e) {
+                e.printStackTrace();
+            }
+        }
+
+        List<FileVo> ret = new ArrayList<>();
+        try {
+            String[] t = path.split("/");
+            DirTree p = fileSystem.getDirTree();
+            for (String s : t) {
+                for (DirTree d : p.getNext()) {
+                    if (Objects.equals(d.getInode().getName(), s)) {
+                        p = d;
+                        break;
+                    }
+                }
+            }
+
+            Deque<DirTree> deque = new ArrayDeque<>();
+            deque.addLast(p);
+            while (deque.size() > 0) {
+                DirTree pp = deque.getFirst();
+                deque.removeFirst();
+                for (DirTree d : pp.getNext()) {
+                    if (d.getInode().getIsDir() == 1) deque.addLast(d);
+                    List<Integer> indirect = new ArrayList<>();
+                    if (d.getInode().getAddress()[10] != -1) {
+                        String[] pos = fileSystem.getBlockInfo().get(d.getInode().getAddress()[10]).split(",");
+                        for (String s : pos) {
+                            indirect.add(Integer.parseInt(s));
+                        }
+                    }
+                    ret.add(new FileVo(d.getInode().getName(),
+                            d.getInode().getId(),
+                            d.getInode().getAddress(),
+                            indirect,
+                            d.getInode().getLimit(),
+                            d.getInode().getLength(),
+                            d.getInode().getCreateBy(),
+                            d.getInode().getCreateTime(),
+                            d.getInode().getIsDir()));
+                }
+            }
+
+        } catch (Exception e) {
+            e.printStackTrace();
+        } finally {
+            if (redisCache.getCacheObject(path).equals("getDirs"))
+            redisCache.deleteObject(path);
         }
         return ret;
     }
 
     //创建目录
     public R<String> makeDir(FileSystem fileSystem, String path, String username, String filename) {
-        String[] t = path.split("/");
-        DirTree p = fileSystem.getDirTree();
-        for (String s : t) {
+        //获取锁
+        while (!redisCache.setnx(path, "makeDir", 60L, TimeUnit.SECONDS)) {
+            try {
+                Thread.sleep(100);
+            } catch (Exception e) {
+                e.printStackTrace();
+            }
+        }
+        try {
+            String[] t = path.split("/");
+            DirTree p = fileSystem.getDirTree();
+            for (String s : t) {
+                for (DirTree d : p.getNext()) {
+                    if (Objects.equals(d.getInode().getName(), s)) {
+                        p = d;
+                        break;
+                    }
+                }
+            }
+
             for (DirTree d : p.getNext()) {
-                if (Objects.equals(d.getInode().getName(), s)) {
-                    p = d;
+                if (d.getInode().getName().equals(filename)) {
+                    return R.error("该文件名已被使用");
+                }
+            }
+
+            Inode inode = new Inode();
+            //检测哪块空闲
+            for (int i = 0; i < InodeNum; i++) {
+                if (!fileSystem.getSuperBlock().getInodeMap().getInodeMap()[i]) {
+                    fileSystem.getSuperBlock().getInodeMap().getInodeMap()[i] = true;
+                    inode.setId(i);
                     break;
                 }
             }
+            if (inode.getId() == -1) return R.error("没有空闲的inode块");
+
+            fileSystem.getSuperBlock().setInodeNum(fileSystem.getSuperBlock().getInodeNum() + 1);
+            inode.setName(filename);
+            inode.setCreateBy(username);
+            inode.setIsDir(1);
+            fileSystem.getInodes().put(inode.getId(), inode);
+
+            //加入根目录
+            DirTree tmpDirTree = new DirTree();
+            tmpDirTree.setParent(p);
+            tmpDirTree.setInode(inode);
+            p.getNext().add(tmpDirTree);
+            p.getInode().setLength(p.getInode().getLength() + 1);
+        } catch (Exception e) {
+            e.printStackTrace();
+            return R.error("系统错误");
+        } finally {
+            if (redisCache.getCacheObject(path).equals("makeDir"))
+            redisCache.deleteObject(path);
         }
-
-        for (DirTree d : p.getNext()) {
-            if (d.getInode().getName().equals(filename)) {
-                return R.error("该文件名已被使用");
-            }
-        }
-
-        Inode inode = new Inode();
-        //检测哪块空闲
-        for (int i = 0; i < InodeNum; i++) {
-            if (!fileSystem.getSuperBlock().getInodeMap().getInodeMap()[i]) {
-                fileSystem.getSuperBlock().getInodeMap().getInodeMap()[i] = true;
-                inode.setId(i);
-                break;
-            }
-        }
-        if (inode.getId() == -1) return R.error("没有空闲的inode块");
-
-        fileSystem.getSuperBlock().setInodeNum(fileSystem.getSuperBlock().getInodeNum() + 1);
-        inode.setName(filename);
-        inode.setCreateBy(username);
-        inode.setIsDir(1);
-        fileSystem.getInodes().put(inode.getId(), inode);
-
-        //加入根目录
-        DirTree tmpDirTree = new DirTree();
-        tmpDirTree.setParent(p);
-        tmpDirTree.setInode(inode);
-        p.getNext().add(tmpDirTree);
-        p.getInode().setLength(p.getInode().getLength() + 1);
 
         return R.success("创建成功");
     }
@@ -312,37 +389,56 @@ public class FileSystemService {
 
     //判断目录下以及该目录是否有文件不属于该用户，采用bfs
     public R<DirTree> checkFilesBelong(String path, String username, FileSystem fileSystem) {
-        String[] t = path.split("/");
-        DirTree p = fileSystem.getDirTree();
-        for (String s : t) {
-            for (DirTree d : p.getNext()) {
-                if (Objects.equals(d.getInode().getName(), s)) {
-                    p = d;
-                    break;
+
+        //获取锁
+        while (!redisCache.setnx(path, "checkBelong", 60L, TimeUnit.SECONDS)) {
+            try {
+                Thread.sleep(100);
+            } catch (Exception e) {
+                e.printStackTrace();
+            }
+        }
+
+        try {
+            String[] t = path.split("/");
+            DirTree p = fileSystem.getDirTree();
+            for (String s : t) {
+                for (DirTree d : p.getNext()) {
+                    if (Objects.equals(d.getInode().getName(), s)) {
+                        p = d;
+                        break;
+                    }
                 }
             }
-        }
 
-        if ("root".equals(username) || "system".equals(username)) {
+            if ("root".equals(username) || "system".equals(username)) {
+                return R.success(p);
+            }
+
+            Deque<DirTree> deque = new ArrayDeque<>();
+            deque.addLast(p);
+
+            while (deque.size() > 0) {
+                DirTree d = deque.getFirst();
+                deque.removeFirst();
+                if (!d.getInode().getCreateBy().equals(username)) {
+                    return R.error("用户: " + username + "没有权限删除 " + d.getInode().getName());
+                }
+
+                for (DirTree son : d.getNext()) {
+                    deque.addLast(son);
+                }
+            }
+
             return R.success(p);
+        } catch (Exception e) {
+            e.printStackTrace();
+        } finally {
+            if (redisCache.getCacheObject(path).equals("checkBelong"))
+            redisCache.deleteObject(path);
         }
 
-        Deque<DirTree> deque = new ArrayDeque<>();
-        deque.addLast(p);
-
-        while (deque.size() > 0) {
-            DirTree d = deque.getFirst();
-            deque.removeFirst();
-            if (!d.getInode().getCreateBy().equals(username)) {
-                return R.error("用户: " + username + "没有权限删除 " + d.getInode().getName());
-            }
-
-            for (DirTree son : d.getNext()) {
-                deque.addLast(son);
-            }
-        }
-
-        return R.success(p);
+        return R.error("内部错误");
     }
 
     //删除目录及目录下的内容，递归删除
@@ -423,46 +519,62 @@ public class FileSystemService {
 
     //创建文件
     public R<String> newFile(FileSystem fileSystem, String path, String username, String filename) {
-        String[] t = path.split("/");
-        DirTree p = fileSystem.getDirTree();
-        for (String s : t) {
+        //获取锁
+        while (!redisCache.setnx(path, "newFile", 60L, TimeUnit.SECONDS)) {
+            try {
+                Thread.sleep(100);
+            } catch (Exception e) {
+                e.printStackTrace();
+            }
+        }
+        try {
+            String[] t = path.split("/");
+            DirTree p = fileSystem.getDirTree();
+            for (String s : t) {
+                for (DirTree d : p.getNext()) {
+                    if (Objects.equals(d.getInode().getName(), s)) {
+                        p = d;
+                        break;
+                    }
+                }
+            }
+
             for (DirTree d : p.getNext()) {
-                if (Objects.equals(d.getInode().getName(), s)) {
-                    p = d;
+                if (d.getInode().getName().equals(filename)) {
+                    return R.error("该文件名已被使用");
+                }
+            }
+
+            Inode inode = new Inode();
+            //检测哪块空闲
+            for (int i = 0; i < InodeNum; i++) {
+                if (!fileSystem.getSuperBlock().getInodeMap().getInodeMap()[i]) {
+                    fileSystem.getSuperBlock().getInodeMap().getInodeMap()[i] = true;
+                    inode.setId(i);
                     break;
                 }
             }
+            if (inode.getId() == -1) return R.error("没有空闲的inode块");
+
+            fileSystem.getSuperBlock().setInodeNum(fileSystem.getSuperBlock().getInodeNum() + 1);
+            inode.setName(filename);
+            inode.setCreateBy(username);
+            inode.setIsDir(0);
+            fileSystem.getInodes().put(inode.getId(), inode);
+
+            //加入根目录
+            DirTree tmpDirTree = new DirTree();
+            tmpDirTree.setParent(p);
+            tmpDirTree.setInode(inode);
+            p.getNext().add(tmpDirTree);
+            p.getInode().setLength(p.getInode().getLength() + 1);
+        } catch (Exception e) {
+            e.printStackTrace();
+            return R.error("内部错误");
+        } finally {
+            if (redisCache.getCacheObject(path).equals("newFile"))
+            redisCache.deleteObject(path);
         }
-
-        for (DirTree d : p.getNext()) {
-            if (d.getInode().getName().equals(filename)) {
-                return R.error("该文件名已被使用");
-            }
-        }
-
-        Inode inode = new Inode();
-        //检测哪块空闲
-        for (int i = 0; i < InodeNum; i++) {
-            if (!fileSystem.getSuperBlock().getInodeMap().getInodeMap()[i]) {
-                fileSystem.getSuperBlock().getInodeMap().getInodeMap()[i] = true;
-                inode.setId(i);
-                break;
-            }
-        }
-        if (inode.getId() == -1) return R.error("没有空闲的inode块");
-
-        fileSystem.getSuperBlock().setInodeNum(fileSystem.getSuperBlock().getInodeNum() + 1);
-        inode.setName(filename);
-        inode.setCreateBy(username);
-        inode.setIsDir(0);
-        fileSystem.getInodes().put(inode.getId(), inode);
-
-        //加入根目录
-        DirTree tmpDirTree = new DirTree();
-        tmpDirTree.setParent(p);
-        tmpDirTree.setInode(inode);
-        p.getNext().add(tmpDirTree);
-        p.getInode().setLength(p.getInode().getLength() + 1);
 
         return R.success("创建成功");
     }
@@ -470,210 +582,240 @@ public class FileSystemService {
 
     //读取文件
     public R<String> catFile(FileSystem fileSystem, String path, String group, String filename) {
-        String[] t = path.split("/");
-        DirTree p = fileSystem.getDirTree();
-        for (String s : t) {
+        //获取锁
+        while (!redisCache.setnx(path, "catFile", 60L, TimeUnit.SECONDS)) {
+            try {
+                Thread.sleep(100);
+            } catch (Exception e) {
+                e.printStackTrace();
+            }
+        }
+        try {
+            String[] t = path.split("/");
+            DirTree p = fileSystem.getDirTree();
+            for (String s : t) {
+                for (DirTree d : p.getNext()) {
+                    if (Objects.equals(d.getInode().getName(), s)) {
+                        p = d;
+                        break;
+                    }
+                }
+            }
+
+            Inode inode = new Inode();
+
             for (DirTree d : p.getNext()) {
-                if (Objects.equals(d.getInode().getName(), s)) {
-                    p = d;
+                if (d.getInode().getName().equals(filename)) {
+                    inode = d.getInode();
                     break;
                 }
             }
-        }
 
-        Inode inode = new Inode();
-
-        for (DirTree d : p.getNext()) {
-            if (d.getInode().getName().equals(filename)) {
-                inode = d.getInode();
-                break;
+            if (inode.getId() == -1) {
+                return R.error("改文件不存在");
             }
-        }
 
-        if (inode.getId() == -1) {
-            return R.error("改文件不存在");
-        }
-
-        if (inode.getIsDir() == 1) {
-            return R.error(inode.getName() + "为目录");
-        }
-
-
-        StringBuilder ret = new StringBuilder();
-
-        //读取直接索引
-        for (int i = 0; i < 10; i++) {
-            if (inode.getAddress()[i] == -1) break;
-            ret.append(fileSystem.getBlockInfo().get(inode.getAddress()[i]));
-        }
-
-        //读取间接索引
-        if (inode.getAddress()[10] != -1) {
-            String posBlock = fileSystem.getBlockInfo().get(inode.getAddress()[10]);
-            String[] pos = posBlock.split(",");
-
-            for (String s : pos) {
-                ret.append(fileSystem.getBlockInfo().get(Integer.parseInt(s)));
+            if (inode.getIsDir() == 1) {
+                return R.error(inode.getName() + "为目录");
             }
-        }
 
-        return R.success(ret.toString());
+
+            StringBuilder ret = new StringBuilder();
+
+            //读取直接索引
+            for (int i = 0; i < 10; i++) {
+                if (inode.getAddress()[i] == -1) break;
+                ret.append(fileSystem.getBlockInfo().get(inode.getAddress()[i]));
+            }
+
+            //读取间接索引
+            if (inode.getAddress()[10] != -1) {
+                String posBlock = fileSystem.getBlockInfo().get(inode.getAddress()[10]);
+                String[] pos = posBlock.split(",");
+
+                for (String s : pos) {
+                    ret.append(fileSystem.getBlockInfo().get(Integer.parseInt(s)));
+                }
+            }
+
+            return R.success(ret.toString());
+        } catch (Exception e) {
+            e.printStackTrace();
+        } finally {
+            if (redisCache.getCacheObject(path).equals("catFile"))
+            redisCache.deleteObject(path);
+        }
+        return R.error("系统内部错误");
     }
 
 
     //写入文件
     public R<String> writeFile(FileSystem fileSystem, String path, String group,String filename, String data) {
-        String[] t = path.split("/");
-        DirTree p = fileSystem.getDirTree();
-        for (String s : t) {
+        //获取锁
+        while (!redisCache.setnx(path, "writeFile", 60L, TimeUnit.SECONDS)) {
+            try {
+                Thread.sleep(100);
+            } catch (Exception e) {
+                e.printStackTrace();
+            }
+        }
+        try {
+            String[] t = path.split("/");
+            DirTree p = fileSystem.getDirTree();
+            for (String s : t) {
+                for (DirTree d : p.getNext()) {
+                    if (Objects.equals(d.getInode().getName(), s)) {
+                        p = d;
+                        break;
+                    }
+                }
+            }
+
+            Inode inode = new Inode();
+
             for (DirTree d : p.getNext()) {
-                if (Objects.equals(d.getInode().getName(), s)) {
-                    p = d;
+                if (d.getInode().getName().equals(filename)) {
+                    inode = d.getInode();
                     break;
                 }
             }
-        }
 
-        Inode inode = new Inode();
-
-        for (DirTree d : p.getNext()) {
-            if (d.getInode().getName().equals(filename)) {
-                inode = d.getInode();
-                break;
+            if (inode.getId() == -1) {
+                return R.error("改文件不存在");
             }
-        }
 
-        if (inode.getId() == -1) {
-            return R.error("改文件不存在");
-        }
-
-        if (inode.getIsDir() == 1) {
-            return R.error(inode.getName() + "为目录");
-        }
-
-        String fG = "";
-
-        for (User user : fileSystem.getBootBlock().getUserList()) {
-            if (user.getUsername().equals(inode.getCreateBy())) {
-                fG = user.getGroup();
+            if (inode.getIsDir() == 1) {
+                return R.error(inode.getName() + "为目录");
             }
-        }
 
-        if (!fG.equals(group)) {
-            return R.error("没有权限写入别的组的用户文件");
-        }
+            String fG = "";
 
-        //先从系统中移除对应的文件
-        //删除直接索引
-        for (int i = 0; i < 10; i++) {
-            if (inode.getAddress()[i] == -1) {
-                break;
+            for (User user : fileSystem.getBootBlock().getUserList()) {
+                if (user.getUsername().equals(inode.getCreateBy())) {
+                    fG = user.getGroup();
+                }
             }
-            fileSystem.getBlockInfo().remove(inode.getAddress()[i]);
-            fileSystem.getSuperBlock().setBlockNum(fileSystem.getSuperBlock().getBlockNum() - 1);
-            fileSystem.getSuperBlock().setBlockFree(fileSystem.getSuperBlock().getBlockFree() + 1);
-            fileSystem.getSuperBlock().setLastBlockSize(fileSystem.getSuperBlock().getLastBlockSize() + BlockSize);
-            fileSystem.getSuperBlock().getBlockMap().getBlockMap()[inode.getAddress()[i]] = false;
-            inode.getAddress()[i] = -1;
-        }
 
+            if (!fG.equals(group)) {
+                return R.error("没有权限写入别的组的用户文件");
+            }
 
-        //删除间接索引, 间接索引格式"1,2,3,"
-        if (inode.getAddress()[10] != -1) {
-            String info = fileSystem.getBlockInfo().get(inode.getAddress()[10]);
-
-            fileSystem.getBlockInfo().remove(inode.getAddress()[10]);
-            fileSystem.getSuperBlock().setBlockNum(fileSystem.getSuperBlock().getBlockNum() - 1);
-            fileSystem.getSuperBlock().setBlockFree(fileSystem.getSuperBlock().getBlockFree() + 1);
-            fileSystem.getSuperBlock().setLastBlockSize(fileSystem.getSuperBlock().getLastBlockSize() + BlockSize);
-            fileSystem.getSuperBlock().getBlockMap().getBlockMap()[inode.getAddress()[10]] = false;
-            inode.getAddress()[10] = -1;
-
-            String[] blocks = info.split(",");
-
-            for (String block : blocks) {
-                int curBlock = Integer.parseInt(block);
-                fileSystem.getBlockInfo().remove(curBlock);
+            //先从系统中移除对应的文件
+            //删除直接索引
+            for (int i = 0; i < 10; i++) {
+                if (inode.getAddress()[i] == -1) {
+                    break;
+                }
+                fileSystem.getBlockInfo().remove(inode.getAddress()[i]);
                 fileSystem.getSuperBlock().setBlockNum(fileSystem.getSuperBlock().getBlockNum() - 1);
                 fileSystem.getSuperBlock().setBlockFree(fileSystem.getSuperBlock().getBlockFree() + 1);
                 fileSystem.getSuperBlock().setLastBlockSize(fileSystem.getSuperBlock().getLastBlockSize() + BlockSize);
-                fileSystem.getSuperBlock().getBlockMap().getBlockMap()[curBlock] = false;
+                fileSystem.getSuperBlock().getBlockMap().getBlockMap()[inode.getAddress()[i]] = false;
+                inode.getAddress()[i] = -1;
             }
-        }
 
 
-        //写入文件
-        int fileIdx = 0;
-        int addressIdx = 0;
+            //删除间接索引, 间接索引格式"1,2,3,"
+            if (inode.getAddress()[10] != -1) {
+                String info = fileSystem.getBlockInfo().get(inode.getAddress()[10]);
 
-        while (fileIdx < data.length()) {
-            int right = Math.min(data.length(), fileIdx + BlockSize);
-            int newBlockIdx = -1;
+                fileSystem.getBlockInfo().remove(inode.getAddress()[10]);
+                fileSystem.getSuperBlock().setBlockNum(fileSystem.getSuperBlock().getBlockNum() - 1);
+                fileSystem.getSuperBlock().setBlockFree(fileSystem.getSuperBlock().getBlockFree() + 1);
+                fileSystem.getSuperBlock().setLastBlockSize(fileSystem.getSuperBlock().getLastBlockSize() + BlockSize);
+                fileSystem.getSuperBlock().getBlockMap().getBlockMap()[inode.getAddress()[10]] = false;
+                inode.getAddress()[10] = -1;
 
-            for (int i = 0; i < fileSystem.getSuperBlock().getBlockMap().getBlockMap().length; i ++) {
-                if (!fileSystem.getSuperBlock().getBlockMap().getBlockMap()[i]) {
-                    fileSystem.getSuperBlock().getBlockMap().getBlockMap()[i] = true;
-                    newBlockIdx = i;
-                    break;
+                String[] blocks = info.split(",");
+
+                for (String block : blocks) {
+                    int curBlock = Integer.parseInt(block);
+                    fileSystem.getBlockInfo().remove(curBlock);
+                    fileSystem.getSuperBlock().setBlockNum(fileSystem.getSuperBlock().getBlockNum() - 1);
+                    fileSystem.getSuperBlock().setBlockFree(fileSystem.getSuperBlock().getBlockFree() + 1);
+                    fileSystem.getSuperBlock().setLastBlockSize(fileSystem.getSuperBlock().getLastBlockSize() + BlockSize);
+                    fileSystem.getSuperBlock().getBlockMap().getBlockMap()[curBlock] = false;
                 }
             }
 
-            if (newBlockIdx == -1) return R.error("磁盘空间不够，部分内容写入失败");
 
-            //直接索引
-            if (addressIdx < 10) {
-                inode.getAddress()[addressIdx] = newBlockIdx;
+            //写入文件
+            int fileIdx = 0;
+            int addressIdx = 0;
 
-                fileSystem.getBlockInfo().put(newBlockIdx, data.substring(fileIdx, right));
-                fileSystem.getSuperBlock().setBlockNum(fileSystem.getSuperBlock().getBlockNum() + 1);
-                fileSystem.getSuperBlock().setBlockFree(fileSystem.getSuperBlock().getBlockFree() - 1);
-                fileSystem.getSuperBlock().setLastBlockSize(fileSystem.getSuperBlock().getLastBlockSize() - BlockSize);
+            while (fileIdx < data.length()) {
+                int right = Math.min(data.length(), fileIdx + BlockSize);
+                int newBlockIdx = -1;
 
-                addressIdx++;
-
-            }
-            else {
-                //间接索引
-                //没有分配则直接分配间接索引结点
-                if (inode.getAddress()[10] == -1) {
-                    int newDataBlock = -1;
-
-                    for (int i = 0; i < fileSystem.getSuperBlock().getBlockMap().getBlockMap().length; i ++) {
-                        if (!fileSystem.getSuperBlock().getBlockMap().getBlockMap()[i]) {
-                            fileSystem.getSuperBlock().getBlockMap().getBlockMap()[i] = true;
-                            newDataBlock = i;
-                            break;
-                        }
+                for (int i = 0; i < fileSystem.getSuperBlock().getBlockMap().getBlockMap().length; i++) {
+                    if (!fileSystem.getSuperBlock().getBlockMap().getBlockMap()[i]) {
+                        fileSystem.getSuperBlock().getBlockMap().getBlockMap()[i] = true;
+                        newBlockIdx = i;
+                        break;
                     }
-
-                    if (newDataBlock == -1) return R.error("磁盘空间不够，部分内容写入失败");
-
-                    //先分配间接索引结点
-                    inode.getAddress()[addressIdx] = newBlockIdx;
-                    fileSystem.getBlockInfo().put(newBlockIdx, String.valueOf(newDataBlock) + ",");
-                    fileSystem.getSuperBlock().setBlockNum(fileSystem.getSuperBlock().getBlockNum() + 1);
-                    fileSystem.getSuperBlock().setBlockFree(fileSystem.getSuperBlock().getBlockFree() - 1);
-                    fileSystem.getSuperBlock().setLastBlockSize(fileSystem.getSuperBlock().getLastBlockSize() - BlockSize);
-
-                    //再分配数据结点
-                    fileSystem.getBlockInfo().put(newDataBlock, data.substring(fileIdx, right));
-                    fileSystem.getSuperBlock().setBlockNum(fileSystem.getSuperBlock().getBlockNum() + 1);
-                    fileSystem.getSuperBlock().setBlockFree(fileSystem.getSuperBlock().getBlockFree() - 1);
-                    fileSystem.getSuperBlock().setLastBlockSize(fileSystem.getSuperBlock().getLastBlockSize() - BlockSize);
                 }
-                else {
-                    //否则先修改原来的间接结点，再写入磁盘块
-                    fileSystem.getBlockInfo().put(inode.getAddress()[10], fileSystem.getBlockInfo().get(inode.getAddress()[10]) + String.valueOf(newBlockIdx) + ",");
+
+                if (newBlockIdx == -1) return R.error("磁盘空间不够，部分内容写入失败");
+
+                //直接索引
+                if (addressIdx < 10) {
+                    inode.getAddress()[addressIdx] = newBlockIdx;
+
                     fileSystem.getBlockInfo().put(newBlockIdx, data.substring(fileIdx, right));
                     fileSystem.getSuperBlock().setBlockNum(fileSystem.getSuperBlock().getBlockNum() + 1);
                     fileSystem.getSuperBlock().setBlockFree(fileSystem.getSuperBlock().getBlockFree() - 1);
                     fileSystem.getSuperBlock().setLastBlockSize(fileSystem.getSuperBlock().getLastBlockSize() - BlockSize);
-                }
-            }
 
-            fileIdx = right;
+                    addressIdx++;
+
+                } else {
+                    //间接索引
+                    //没有分配则直接分配间接索引结点
+                    if (inode.getAddress()[10] == -1) {
+                        int newDataBlock = -1;
+
+                        for (int i = 0; i < fileSystem.getSuperBlock().getBlockMap().getBlockMap().length; i++) {
+                            if (!fileSystem.getSuperBlock().getBlockMap().getBlockMap()[i]) {
+                                fileSystem.getSuperBlock().getBlockMap().getBlockMap()[i] = true;
+                                newDataBlock = i;
+                                break;
+                            }
+                        }
+
+                        if (newDataBlock == -1) return R.error("磁盘空间不够，部分内容写入失败");
+
+                        //先分配间接索引结点
+                        inode.getAddress()[addressIdx] = newBlockIdx;
+                        fileSystem.getBlockInfo().put(newBlockIdx, String.valueOf(newDataBlock) + ",");
+                        fileSystem.getSuperBlock().setBlockNum(fileSystem.getSuperBlock().getBlockNum() + 1);
+                        fileSystem.getSuperBlock().setBlockFree(fileSystem.getSuperBlock().getBlockFree() - 1);
+                        fileSystem.getSuperBlock().setLastBlockSize(fileSystem.getSuperBlock().getLastBlockSize() - BlockSize);
+
+                        //再分配数据结点
+                        fileSystem.getBlockInfo().put(newDataBlock, data.substring(fileIdx, right));
+                        fileSystem.getSuperBlock().setBlockNum(fileSystem.getSuperBlock().getBlockNum() + 1);
+                        fileSystem.getSuperBlock().setBlockFree(fileSystem.getSuperBlock().getBlockFree() - 1);
+                        fileSystem.getSuperBlock().setLastBlockSize(fileSystem.getSuperBlock().getLastBlockSize() - BlockSize);
+                    } else {
+                        //否则先修改原来的间接结点，再写入磁盘块
+                        fileSystem.getBlockInfo().put(inode.getAddress()[10], fileSystem.getBlockInfo().get(inode.getAddress()[10]) + String.valueOf(newBlockIdx) + ",");
+                        fileSystem.getBlockInfo().put(newBlockIdx, data.substring(fileIdx, right));
+                        fileSystem.getSuperBlock().setBlockNum(fileSystem.getSuperBlock().getBlockNum() + 1);
+                        fileSystem.getSuperBlock().setBlockFree(fileSystem.getSuperBlock().getBlockFree() - 1);
+                        fileSystem.getSuperBlock().setLastBlockSize(fileSystem.getSuperBlock().getLastBlockSize() - BlockSize);
+                    }
+                }
+
+                fileIdx = right;
+            }
+            inode.setLength(data.length());
+        } catch (Exception e) {
+            e.printStackTrace();
+            return R.error("系统内部错误");
+        } finally {
+            if (redisCache.getCacheObject(path).equals("writeFile"))
+            redisCache.deleteObject(path);
         }
-        inode.setLength(data.length());
 
         return R.success("写入文件成功");
     }
@@ -681,81 +823,97 @@ public class FileSystemService {
 
 
     public R<String> delFile(FileSystem fileSystem, String path, String username, String filename) {
-        String[] t = path.split("/");
-        DirTree p = fileSystem.getDirTree();
-        for (String s : t) {
+        //获取锁
+        while (!redisCache.setnx(path, "delFile", 60L, TimeUnit.SECONDS)) {
+            try {
+                Thread.sleep(100);
+            } catch (Exception e) {
+                e.printStackTrace();
+            }
+        }
+
+        try {
+            String[] t = path.split("/");
+            DirTree p = fileSystem.getDirTree();
+            for (String s : t) {
+                for (DirTree d : p.getNext()) {
+                    if (Objects.equals(d.getInode().getName(), s)) {
+                        p = d;
+                        break;
+                    }
+                }
+            }
+
+            Inode inode = null;
+            DirTree dirTree = null;
+
             for (DirTree d : p.getNext()) {
-                if (Objects.equals(d.getInode().getName(), s)) {
-                    p = d;
+                if (d.getInode().getName().equals(filename)) {
+                    dirTree = d;
+                    inode = d.getInode();
                     break;
                 }
             }
-        }
 
-        Inode inode = null;
-        DirTree dirTree = null;
-
-        for (DirTree d : p.getNext()) {
-            if (d.getInode().getName().equals(filename)) {
-                dirTree = d;
-                inode = d.getInode();
-                break;
+            if (inode == null) {
+                return R.error("没有该文件");
             }
-        }
 
-        if (inode == null) {
-            return R.error("没有该文件");
-        }
-
-        if (inode.getIsDir() == 1) {
-            return R.error("该文件为目录文件");
-        }
-
-        if (!inode.getCreateBy().equals(username)) {
-            return R.error("无权限删除别的用户内容");
-        }
-
-        dirTree.setParent(null);
-
-        fileSystem.getInodes().remove(inode.getId());
-        fileSystem.getSuperBlock().setInodeNum(fileSystem.getSuperBlock().getInodeNum() - 1);
-        fileSystem.getSuperBlock().getInodeMap().getInodeMap()[inode.getId()] = false;
-
-        //删除直接索引
-        for (int i = 0; i < 10; i++) {
-            if (inode.getAddress()[i] == -1) {
-                break;
+            if (inode.getIsDir() == 1) {
+                return R.error("该文件为目录文件");
             }
-            fileSystem.getBlockInfo().remove(inode.getAddress()[i]);
-            fileSystem.getSuperBlock().setBlockNum(fileSystem.getSuperBlock().getBlockNum() - 1);
-            fileSystem.getSuperBlock().setBlockFree(fileSystem.getSuperBlock().getBlockFree() + 1);
-            fileSystem.getSuperBlock().setLastBlockSize(fileSystem.getSuperBlock().getLastBlockSize() + BlockSize);
-            fileSystem.getSuperBlock().getBlockMap().getBlockMap()[inode.getAddress()[i]] = false;
-            inode.getAddress()[i] = -1;
-        }
 
+            if (!inode.getCreateBy().equals(username)) {
+                return R.error("无权限删除别的用户内容");
+            }
 
-        //删除间接索引, 间接索引格式"1,2,3,"
-        if (inode.getAddress()[10] != -1) {
-            String info = fileSystem.getBlockInfo().get(inode.getAddress()[10]);
+            dirTree.setParent(null);
 
-            fileSystem.getBlockInfo().remove(inode.getAddress()[10]);
-            fileSystem.getSuperBlock().setBlockNum(fileSystem.getSuperBlock().getBlockNum() - 1);
-            fileSystem.getSuperBlock().setBlockFree(fileSystem.getSuperBlock().getBlockFree() + 1);
-            fileSystem.getSuperBlock().setLastBlockSize(fileSystem.getSuperBlock().getLastBlockSize() + BlockSize);
-            fileSystem.getSuperBlock().getBlockMap().getBlockMap()[inode.getAddress()[10]] = false;
-            inode.getAddress()[10] = -1;
+            fileSystem.getInodes().remove(inode.getId());
+            fileSystem.getSuperBlock().setInodeNum(fileSystem.getSuperBlock().getInodeNum() - 1);
+            fileSystem.getSuperBlock().getInodeMap().getInodeMap()[inode.getId()] = false;
 
-            String[] blocks = info.split(",");
-
-            for (String block : blocks) {
-                int curBlock = Integer.parseInt(block);
-                fileSystem.getBlockInfo().remove(curBlock);
+            //删除直接索引
+            for (int i = 0; i < 10; i++) {
+                if (inode.getAddress()[i] == -1) {
+                    break;
+                }
+                fileSystem.getBlockInfo().remove(inode.getAddress()[i]);
                 fileSystem.getSuperBlock().setBlockNum(fileSystem.getSuperBlock().getBlockNum() - 1);
                 fileSystem.getSuperBlock().setBlockFree(fileSystem.getSuperBlock().getBlockFree() + 1);
                 fileSystem.getSuperBlock().setLastBlockSize(fileSystem.getSuperBlock().getLastBlockSize() + BlockSize);
-                fileSystem.getSuperBlock().getBlockMap().getBlockMap()[curBlock] = false;
+                fileSystem.getSuperBlock().getBlockMap().getBlockMap()[inode.getAddress()[i]] = false;
+                inode.getAddress()[i] = -1;
             }
+
+
+            //删除间接索引, 间接索引格式"1,2,3,"
+            if (inode.getAddress()[10] != -1) {
+                String info = fileSystem.getBlockInfo().get(inode.getAddress()[10]);
+
+                fileSystem.getBlockInfo().remove(inode.getAddress()[10]);
+                fileSystem.getSuperBlock().setBlockNum(fileSystem.getSuperBlock().getBlockNum() - 1);
+                fileSystem.getSuperBlock().setBlockFree(fileSystem.getSuperBlock().getBlockFree() + 1);
+                fileSystem.getSuperBlock().setLastBlockSize(fileSystem.getSuperBlock().getLastBlockSize() + BlockSize);
+                fileSystem.getSuperBlock().getBlockMap().getBlockMap()[inode.getAddress()[10]] = false;
+                inode.getAddress()[10] = -1;
+
+                String[] blocks = info.split(",");
+
+                for (String block : blocks) {
+                    int curBlock = Integer.parseInt(block);
+                    fileSystem.getBlockInfo().remove(curBlock);
+                    fileSystem.getSuperBlock().setBlockNum(fileSystem.getSuperBlock().getBlockNum() - 1);
+                    fileSystem.getSuperBlock().setBlockFree(fileSystem.getSuperBlock().getBlockFree() + 1);
+                    fileSystem.getSuperBlock().setLastBlockSize(fileSystem.getSuperBlock().getLastBlockSize() + BlockSize);
+                    fileSystem.getSuperBlock().getBlockMap().getBlockMap()[curBlock] = false;
+                }
+            }
+        } catch (Exception e) {
+            e.printStackTrace();
+        } finally {
+            if (redisCache.getCacheObject(path).equals("delFile"))
+                redisCache.deleteObject(path);
         }
 
         return R.success("删除成功");
@@ -764,49 +922,65 @@ public class FileSystemService {
 
     //检测复制目录下有无非同组的文件
     public R<String> checkFileGroup(FileSystem fileSystem, String path, String fileName, String group) {
-        if (!path.equals("/")) {
-            path += "/";
-        }
-        path += fileName;
-
-        String[] t = path.split("/");
-        DirTree p = fileSystem.getDirTree();
-        for (String s : t) {
-            for (DirTree d : p.getNext()) {
-                if (Objects.equals(d.getInode().getName(), s)) {
-                    p = d;
-                    break;
-                }
+        //获取锁
+        while (!redisCache.setnx(path, "checkFileGroup", 60L, TimeUnit.SECONDS)) {
+            try {
+                Thread.sleep(100);
+            } catch (Exception e) {
+                e.printStackTrace();
             }
         }
 
-        if ("root".equals(group)) {
-            return R.success("root组拥有所有权限");
-        }
+        try {
+            if (!path.equals("/")) {
+                path += "/";
+            }
+            path += fileName;
 
-        Deque<DirTree> deque = new ArrayDeque<>();
-        deque.addLast(p);
-
-        while (deque.size() > 0) {
-            DirTree d = deque.getFirst();
-            deque.removeFirst();
-
-            String fG = "";
-
-            for (User user : fileSystem.getBootBlock().getUserList()) {
-                if (user.getUsername().equals(d.getInode().getCreateBy())) {
-                    fG = user.getGroup();
-                    break;
+            String[] t = path.split("/");
+            DirTree p = fileSystem.getDirTree();
+            for (String s : t) {
+                for (DirTree d : p.getNext()) {
+                    if (Objects.equals(d.getInode().getName(), s)) {
+                        p = d;
+                        break;
+                    }
                 }
             }
 
-            if (!fG.equals(group)) {
-                return R.error("没有权限进入 " + d.getInode().getName());
+            if ("root".equals(group)) {
+                return R.success("root组拥有所有权限");
             }
 
-            for (DirTree son : d.getNext()) {
-                deque.addLast(son);
+            Deque<DirTree> deque = new ArrayDeque<>();
+            deque.addLast(p);
+
+            while (deque.size() > 0) {
+                DirTree d = deque.getFirst();
+                deque.removeFirst();
+
+                String fG = "";
+
+                for (User user : fileSystem.getBootBlock().getUserList()) {
+                    if (user.getUsername().equals(d.getInode().getCreateBy())) {
+                        fG = user.getGroup();
+                        break;
+                    }
+                }
+
+                if (!fG.equals(group)) {
+                    return R.error("没有权限进入 " + d.getInode().getName());
+                }
+
+                for (DirTree son : d.getNext()) {
+                    deque.addLast(son);
+                }
             }
+        } catch (Exception e) {
+            e.printStackTrace();
+        } finally {
+            if (redisCache.getCacheObject(path).equals("checkFileGroup"))
+                redisCache.deleteObject(path);
         }
 
         return R.success("拥有该文件r权限");
@@ -815,48 +989,78 @@ public class FileSystemService {
 
     //文件系统内部复制
     public R<String> copyFileInside(FileSystem fileSystem, String fromPath, String toPath, String fileFromName, String fileToName, String username) {
-        if (fileToName.length() == 0) fileToName = fileFromName;
-
-        //获取源文件目录树位置
-        if (!fromPath.equals("/")) {
-            fromPath += "/";
-        }
-        fromPath += fileFromName;
-
-        String[] ft = fromPath.split("/");
-        DirTree from = fileSystem.getDirTree();
-        for (String s : ft) {
-            for (DirTree d : from.getNext()) {
-                if (Objects.equals(d.getInode().getName(), s)) {
-                    from = d;
-                    break;
-                }
+        //获取锁
+        while (!redisCache.setnx(fromPath, "copyFile", 60L, TimeUnit.SECONDS)) {
+            try {
+                Thread.sleep(100);
+            } catch (Exception e) {
+                e.printStackTrace();
             }
         }
 
-        //获取目标文件目录树位置
-        String[] t = toPath.split("/");
-        DirTree to = fileSystem.getDirTree();
-        for (String s : t) {
+        //获取锁
+        while (!redisCache.setnx(toPath, "copyFile", 60L, TimeUnit.SECONDS)) {
+            try {
+                Thread.sleep(100);
+            } catch (Exception e) {
+                e.printStackTrace();
+            }
+        }
+
+        try {
+
+
+            if (fileToName.length() == 0) fileToName = fileFromName;
+
+            //获取源文件目录树位置
+            if (!fromPath.equals("/")) {
+                fromPath += "/";
+            }
+            fromPath += fileFromName;
+
+            String[] ft = fromPath.split("/");
+            DirTree from = fileSystem.getDirTree();
+            for (String s : ft) {
+                for (DirTree d : from.getNext()) {
+                    if (Objects.equals(d.getInode().getName(), s)) {
+                        from = d;
+                        break;
+                    }
+                }
+            }
+
+            //获取目标文件目录树位置
+            String[] t = toPath.split("/");
+            DirTree to = fileSystem.getDirTree();
+            for (String s : t) {
+                for (DirTree d : to.getNext()) {
+                    if (Objects.equals(d.getInode().getName(), s)) {
+                        to = d;
+                        break;
+                    }
+                }
+            }
+            //检查是否存在
             for (DirTree d : to.getNext()) {
-                if (Objects.equals(d.getInode().getName(), s)) {
-                    to = d;
-                    break;
+                if (d.getInode().getName().equals(fileToName)) {
+                    return R.error("文件: " + fileToName + " 已存在");
                 }
             }
+
+            DirTree newNode = copyDFS(fileSystem, from, fileToName, username);
+
+            newNode.setParent(to);
+
+            to.getNext().add(newNode);
+        } catch (Exception e) {
+            e.printStackTrace();
+            return R.error("内部错误");
+        } finally {
+            if (redisCache.getCacheObject(fromPath).equals("copyFile"))
+                redisCache.deleteObject(fromPath);
+            if (redisCache.getCacheObject(toPath).equals("copyFile"))
+                redisCache.deleteObject(toPath);
         }
-        //检查是否存在
-        for (DirTree d : to.getNext()) {
-            if (d.getInode().getName().equals(fileToName)) {
-                return R.error("文件: " + fileToName + " 已存在");
-            }
-        }
-
-        DirTree newNode = copyDFS(fileSystem, from, fileToName, username);
-
-        newNode.setParent(to);
-
-        to.getNext().add(newNode);
 
         return R.success("复制成功");
     }

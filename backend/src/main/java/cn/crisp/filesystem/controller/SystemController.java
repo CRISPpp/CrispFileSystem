@@ -4,6 +4,7 @@ import cn.crisp.filesystem.common.R;
 import cn.crisp.filesystem.dto.*;
 import cn.crisp.filesystem.entity.DirTree;
 import cn.crisp.filesystem.entity.User;
+import cn.crisp.filesystem.exception.SystemLockException;
 import cn.crisp.filesystem.service.FileSystemService;
 import cn.crisp.filesystem.system.FileSystem;
 import cn.crisp.filesystem.vo.FileVo;
@@ -41,7 +42,13 @@ public class SystemController {
         if (!"root".equals(groupDto.getGroup())) {
             return R.error("没有恢复权限");
         }
-        fileSystem = fileSystemService.check(fileSystem);
+        try {
+            fileSystem = fileSystemService.check(fileSystem);
+        } catch (SystemLockException e) {
+            e.printStackTrace();
+            return R.error("有别的用户正在读写系统，请稍后再试");
+        }
+
         return R.success("读取成功");
     }
 
@@ -51,7 +58,13 @@ public class SystemController {
         if (!"root".equals(groupDto.getGroup())) {
             return R.error("没有保存权限");
         }
-        fileSystemService.save(fileSystem);
+
+        try {
+            fileSystemService.save(fileSystem);
+        }catch (Exception e) {
+            e.printStackTrace();
+            return R.error("别的用户正在读写系统，请稍后再试");
+        }
         return R.success("保存成功");
     }
 
