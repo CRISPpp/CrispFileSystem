@@ -7,7 +7,17 @@ import lombok.Data;
 import java.io.Serializable;
 import java.time.LocalDateTime;
 
-
+/**
+ * i结点的主要属性为；
+ * 	id：记录i结点在数据块的位置。
+ * 	name：文件或目录名。
+ * 	isDir：表示是否为目录，1为是。
+ * 	createTime：创建时间。
+ * 	length：文件长度，目录则为目录下文件和目录个数。
+ * 	address：文件内容的索引，前10项为直接索引，最后一项为间接索引。
+ * 	createBy：创建者。
+ * 	limit：代表权限。
+ */
 @Data
 @AllArgsConstructor
 public class Inode implements Serializable {

@@ -32,11 +32,8 @@ export default {
         let password = ref('');
         let curPath = ref('/');
         let load = ref(false);
-        let ji = new Audio("http://119.29.100.51:11000/crispmall/ji.mp3");
-        let ngm = new Audio("http://119.29.100.51:11000/crispmall/ngm.mp3");
 
         let login = () => {
-            ji.play();
             load.value = true;
             axios.post('/api/sys/login', {
                 username: username.value,
@@ -56,7 +53,6 @@ export default {
                     })
                 }
                 else {
-                    ngm.play();
                     ElNotification({
                         title: '登录失败',
                         message: response.data.msg,

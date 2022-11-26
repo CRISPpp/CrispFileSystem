@@ -101,6 +101,12 @@ public class FileSystemService {
             }
         }
     }
+    /**
+     * 返回文件系统总大小，已创建文件目录总数, 即i结点个数为，已经使用的磁盘块个数，剩余的磁盘块个数，剩余空间大小，启动块在磁盘的偏移，超级块在磁盘的偏移，i结点在磁盘的偏移，可用磁盘区在磁盘的偏移。
+     * @param fileSystem
+     * @return
+     */
+
 
     public List<String> getSystemInfo(FileSystem fileSystem) {
         List<String> ret = new ArrayList<>();
@@ -134,6 +140,7 @@ public class FileSystemService {
         return ret;
     }
 
+
     //判断路径是否正确
     public R<String> checkDir(ChangePathDto changePathDto, FileSystem fileSystem) {
         if(StringUtils.isEmpty(changePathDto.getPath())) return R.error("路径不能为空");
@@ -158,7 +165,7 @@ public class FileSystemService {
                 }
                 if(Objects.equals(paths[i], "..")) {
                     if (p.getParent() == null) {
-                        return R.error("路径错误，你在写尼玛");
+                        return R.error("路径错误");
                     }
                     deque.removeLast();
                     p = p.getParent();
@@ -215,6 +222,12 @@ public class FileSystemService {
         return R.error("路径错误");
     }
 
+    /**
+     * 先获取目录树根结点，之后dfs至对应结点，之后遍历该目录树结点的子节点数组，返回目录或文件的具体信息，包括文件名，id，内容磁盘块位置，间接索引的详细磁盘块位置，文件权限，文件长度或目录文件个数，创建者，创建时间，以及是否为目录。
+     * @param path
+     * @param fileSystem
+     * @return
+     */
     //获取当前目录的所有文件
     public List<FileVo> getDir(String path, FileSystem fileSystem) {
         //获取锁
@@ -259,12 +272,18 @@ public class FileSystemService {
         }catch (Exception e) {
             e.printStackTrace();
         } finally {
-            if (redisCache.getCacheObject(path).equals("getDir")) redisCache.deleteObject(path);
+            if (redisCache.getCacheObject(path) != null &&redisCache.getCacheObject(path).equals("getDir")) redisCache.deleteObject(path);
         }
 
         return ret;
     }
 
+    /**
+     * dfs+bfs，先获取目录树根节点，dfs到对应的目录结点，之后进行bfs，将根目录结点入队，每次访问队头的子节点，将子节点信息写入返回结果，同时将目录结点入队，直至对列为空，返回结果，返回目录或文件的具体信息，包括文件名，id，内容磁盘块位置，间接索引的详细磁盘块位置，文件权限，文件长度或目录文件个数，创建者，创建时间，以及是否为目录。
+     * @param path
+     * @param fileSystem
+     * @return
+     */
     //获取目录下所有文件，包括子文件，算法：bfs
     public List<FileVo> getDirs(String path, FileSystem fileSystem) {
         //获取锁
@@ -318,12 +337,20 @@ public class FileSystemService {
         } catch (Exception e) {
             e.printStackTrace();
         } finally {
-            if (redisCache.getCacheObject(path).equals("getDirs"))
+            if (redisCache.getCacheObject(path) != null &&redisCache.getCacheObject(path).equals("getDirs"))
             redisCache.deleteObject(path);
         }
         return ret;
     }
 
+    /**
+     * dfs获取要创建目录的对应目录树结点，之后遍历子节点，判断是否有文件的文件名与要创建的文件名重名，有则返回错误，之后再检测是否有空闲的inode块，有则获取一块并修改系统信息，没有则返回错误，之后修改文件系统inode区相关的信息，同时创建一个新的inode，注入对应的inode信息，创建新的目录树结点加入目录树。
+     * @param fileSystem
+     * @param path
+     * @param username
+     * @param filename
+     * @return
+     */
     //创建目录
     public R<String> makeDir(FileSystem fileSystem, String path, String username, String filename) {
         //获取锁
@@ -379,7 +406,7 @@ public class FileSystemService {
             e.printStackTrace();
             return R.error("系统错误");
         } finally {
-            if (redisCache.getCacheObject(path).equals("makeDir"))
+            if (redisCache.getCacheObject(path) != null &&redisCache.getCacheObject(path).equals("makeDir"))
             redisCache.deleteObject(path);
         }
 
@@ -434,7 +461,7 @@ public class FileSystemService {
         } catch (Exception e) {
             e.printStackTrace();
         } finally {
-            if (redisCache.getCacheObject(path).equals("checkBelong"))
+            if (redisCache.getCacheObject(path) != null && redisCache.getCacheObject(path).equals("checkBelong"))
             redisCache.deleteObject(path);
         }
 
@@ -572,14 +599,14 @@ public class FileSystemService {
             e.printStackTrace();
             return R.error("内部错误");
         } finally {
-            if (redisCache.getCacheObject(path).equals("newFile"))
+            if (redisCache.getCacheObject(path) != null &&redisCache.getCacheObject(path).equals("newFile"))
             redisCache.deleteObject(path);
         }
 
         return R.success("创建成功");
     }
 
-
+    Integer readCount = 0;
     //读取文件
     public R<String> catFile(FileSystem fileSystem, String path, String group, String filename) {
         //获取锁
@@ -591,6 +618,15 @@ public class FileSystemService {
             }
         }
         try {
+            readCount ++;
+            if (readCount == 1) {
+                redisCache.setnx(path + "writer", "writeFile", 60L, TimeUnit.SECONDS);
+            }
+
+            if (redisCache.getCacheObject(path) != null && redisCache.getCacheObject(path).equals("catFile"))
+                redisCache.deleteObject(path);
+
+
             String[] t = path.split("/");
             DirTree p = fileSystem.getDirTree();
             for (String s : t) {
@@ -642,17 +678,38 @@ public class FileSystemService {
         } catch (Exception e) {
             e.printStackTrace();
         } finally {
-            if (redisCache.getCacheObject(path).equals("catFile"))
+            while (!redisCache.setnx(path, "catFile", 60L, TimeUnit.SECONDS)) {
+                try {
+                    Thread.sleep(100);
+                } catch (Exception e) {
+                    e.printStackTrace();
+                }
+            }
+            readCount --;
+            if (readCount == 0) {
+                if (redisCache.getCacheObject(path + "writer") != null && redisCache.getCacheObject(path + "writer").equals("writeFile"))
+                    redisCache.deleteObject(path + "writer");
+            }
+            if (redisCache.getCacheObject(path) != null &&redisCache.getCacheObject(path).equals("catFile"))
             redisCache.deleteObject(path);
         }
         return R.error("系统内部错误");
     }
 
 
+    /**
+     * 先dfs至目标结点，之后遍历子节点，判断文件是否存在或者文件为目录，是则返回错误，之后再判断是否有权限写入文件，没有权限则返回权限错误，读取原来文件结点的内容地址，先删除直接索引，再删除间接索引，最后按块大小截取要写入的内容，按序写入到磁盘块中，如果写入块数超过10块，则采用间接索引的方式，将新索引的结点写入到i结点address的第11个块中，同时在新结点的磁盘块写入内容，如果没有空闲的磁盘块或者超过最大大小，则返回错误。
+     * @param fileSystem
+     * @param path
+     * @param group
+     * @param filename
+     * @param data
+     * @return
+     */
     //写入文件
     public R<String> writeFile(FileSystem fileSystem, String path, String group,String filename, String data) {
         //获取锁
-        while (!redisCache.setnx(path, "writeFile", 60L, TimeUnit.SECONDS)) {
+        while (!redisCache.setnx(path + "writer", "writeFile", 60L, TimeUnit.SECONDS)) {
             try {
                 Thread.sleep(100);
             } catch (Exception e) {
@@ -813,8 +870,8 @@ public class FileSystemService {
             e.printStackTrace();
             return R.error("系统内部错误");
         } finally {
-            if (redisCache.getCacheObject(path).equals("writeFile"))
-            redisCache.deleteObject(path);
+            if (redisCache.getCacheObject(path + "writer") != null && redisCache.getCacheObject(path + "writer").equals("writeFile"))
+                redisCache.deleteObject(path + "writer");
         }
 
         return R.success("写入文件成功");
@@ -912,7 +969,7 @@ public class FileSystemService {
         } catch (Exception e) {
             e.printStackTrace();
         } finally {
-            if (redisCache.getCacheObject(path).equals("delFile"))
+            if (redisCache.getCacheObject(path) != null &&  redisCache.getCacheObject(path).equals("delFile"))
                 redisCache.deleteObject(path);
         }
 
@@ -922,8 +979,9 @@ public class FileSystemService {
 
     //检测复制目录下有无非同组的文件
     public R<String> checkFileGroup(FileSystem fileSystem, String path, String fileName, String group) {
+        String oldPath = path;
         //获取锁
-        while (!redisCache.setnx(path, "checkFileGroup", 60L, TimeUnit.SECONDS)) {
+        while (!redisCache.setnx(oldPath, "checkFileGroup", 60L, TimeUnit.SECONDS)) {
             try {
                 Thread.sleep(100);
             } catch (Exception e) {
@@ -979,18 +1037,28 @@ public class FileSystemService {
         } catch (Exception e) {
             e.printStackTrace();
         } finally {
-            if (redisCache.getCacheObject(path).equals("checkFileGroup"))
-                redisCache.deleteObject(path);
+            if (redisCache.getCacheObject(oldPath) != null && redisCache.getCacheObject(oldPath).equals("checkFileGroup"))
+                redisCache.deleteObject(oldPath);
         }
 
         return R.success("拥有该文件r权限");
     }
 
 
+    /**
+     * 算法：递归+dfs，终止条件为传入的目录参数为空，否则则创建新的inode结点，将原结点的内容复制一遍，如果为文件，则还要读取文件直接索引以及间接索引，读取所有的内容写入到新的磁盘块中，中途出现磁盘块不够则返回错误，将信息更新到文件系统中。
+     * @param fileSystem
+     * @param fromPath
+     * @param toPath
+     * @param fileFromName
+     * @param fileToName
+     * @param username
+     * @return
+     */
     //文件系统内部复制
     public R<String> copyFileInside(FileSystem fileSystem, String fromPath, String toPath, String fileFromName, String fileToName, String username) {
         //获取锁
-        while (!redisCache.setnx(fromPath, "copyFile", 60L, TimeUnit.SECONDS)) {
+        while (!redisCache.setnx(fromPath + "from", "copyFile", 60L, TimeUnit.SECONDS)) {
             try {
                 Thread.sleep(100);
             } catch (Exception e) {
@@ -999,7 +1067,7 @@ public class FileSystemService {
         }
 
         //获取锁
-        while (!redisCache.setnx(toPath, "copyFile", 60L, TimeUnit.SECONDS)) {
+        while (!redisCache.setnx(toPath + "to", "copyFile", 60L, TimeUnit.SECONDS)) {
             try {
                 Thread.sleep(100);
             } catch (Exception e) {
@@ -1056,10 +1124,10 @@ public class FileSystemService {
             e.printStackTrace();
             return R.error("内部错误");
         } finally {
-            if (redisCache.getCacheObject(fromPath).equals("copyFile"))
-                redisCache.deleteObject(fromPath);
-            if (redisCache.getCacheObject(toPath).equals("copyFile"))
-                redisCache.deleteObject(toPath);
+            if (redisCache.getCacheObject(fromPath + "from") != null &&redisCache.getCacheObject(fromPath + "from").equals("copyFile"))
+                redisCache.deleteObject(fromPath +"from");
+            if (redisCache.getCacheObject(toPath + "to") != null &&redisCache.getCacheObject(toPath + "to").equals("copyFile"))
+                redisCache.deleteObject(toPath + "to");
         }
 
         return R.success("复制成功");
@@ -1172,6 +1240,16 @@ public class FileSystemService {
     }
 
 
+    /**
+     * 先通过路径的第一个字符判断哪个系统，如果字符为/则为unix文件系统，则读取直接索引以及间接索引的内容放入data，否则读取windows系统的文件内容，写入data，同理判断是否为unix文件系统，如果是则同newfile创建文件，再写入到磁盘块，创建直接索引、间接索引等内容，否则写入windows系统。
+     * @param fileSystem
+     * @param fromPath
+     * @param toPath
+     * @param fileFromName
+     * @param fileToName
+     * @param username
+     * @return
+     */
     //文件系统之间复制
     public R<String> simdiskCopy(FileSystem fileSystem, String fromPath,  String toPath, String fileFromName, String fileToName, String username) {
         if (fileToName.length() == 0) fileToName = fileFromName;

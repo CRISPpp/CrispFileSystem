@@ -694,6 +694,8 @@ export default {
             }).catch(error => console.log(error));
             catMark.value = false;
         }
+
+
         let cat = (path) => {
             if (path[0] != '/') {
                 if (store.state.user.info.curPath == "/") {
